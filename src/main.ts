@@ -71,7 +71,7 @@ export default async (req: Request, res: Response): Promise<void> => {
   app(req, res);
 };
 
-// Solo ejecutar bootstrap en desarrollo local
-if (process.env.NODE_ENV !== 'production') {
+const isServerless = !!process.env.VERCEL;
+if (!isServerless) {
   void bootstrap();
 }
