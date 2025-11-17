@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
 import { Tabla } from '../entities/tabla.entity';
 import { TablaDetalle } from '../entities/tabla-detalle.entity';
@@ -124,5 +124,24 @@ export class TablaService {
       where: { numeroTabla, activo: true },
     });
     return count > 0;
+  }
+
+  /**
+   * Obtiene múltiples detalles por una lista de IDs (idTablaDetalle)
+   * @param ids Lista de IDs de detalles
+   * @returns Lista de detalles activos correspondientes
+   */
+  async findDetallesByIds(ids: number[]): Promise<TablaDetalleResponseDto[]> {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+
+    const detalles = await this.tablaDetalleRepository.find({
+      where: { idTablaDetalle: In(ids), activo: true },
+    });
+
+    return plainToInstance(TablaDetalleResponseDto, detalles, {
+      excludeExtraneousValues: true,
+    });
   }
 }

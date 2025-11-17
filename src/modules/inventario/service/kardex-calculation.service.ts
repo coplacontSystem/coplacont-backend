@@ -409,8 +409,7 @@ export class KardexCalculationService {
       return {
         fecha: new Date(mov.m_fecha),
         tipoOperacion: mov.c_tipoOperacion,
-        tipoOperacionCodigo:
-          mov.c_tipoOperacion_codigo || mov.m_codigo_tabla12,
+        tipoOperacionCodigo: mov.c_tipoOperacion_codigo || mov.m_codigo_tabla12,
         tipoMovimiento: mov.tipomovimiento,
         tipoComprobante: mov.c_tipoComprobante,
         tipoComprobanteCodigo:

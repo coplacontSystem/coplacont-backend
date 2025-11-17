@@ -1,10 +1,11 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards, Query } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
 import { TablaService } from '../service/tabla.service';
@@ -163,5 +164,40 @@ export class TablaController {
     @Param('codigo') codigo: string,
   ): Promise<TablaDetalleResponseDto> {
     return this.tablaService.findDetalleByCodigo(numeroTabla, codigo);
+  }
+
+  /**
+   * Obtiene detalles por una lista de IDs (idTablaDetalle)
+   */
+  @Get('detalles/by-ids')
+  @ApiOperation({
+    summary: 'Obtener detalles por lista de IDs',
+    description:
+      'Recibe un arreglo de idTablaDetalle y devuelve los detalles activos correspondientes',
+  })
+  @ApiQuery({
+    name: 'ids',
+    description: 'Lista de IDs separados por coma (ej: 1,2,3)',
+    required: true,
+    example: '1,2,3',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Detalles obtenidos exitosamente',
+    type: [TablaDetalleResponseDto],
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'No autorizado - Token JWT requerido',
+  })
+  @ApiResponse({ status: 500, description: 'Error interno del servidor' })
+  async findDetallesByIds(
+    @Query('ids') ids: string,
+  ): Promise<TablaDetalleResponseDto[]> {
+    const idList = (ids || '')
+      .split(',')
+      .map((v) => Number(v.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    return this.tablaService.findDetallesByIds(idList);
   }
 }

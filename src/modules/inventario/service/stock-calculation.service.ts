@@ -108,11 +108,6 @@ export class StockCalculationService {
       queryBuilder.andWhere('m.fecha <= :fechaHasta', { fechaHasta });
     }
 
-    const movimientos: Array<{ md_cantidad: number; m_tipo: string }> =
-      await queryBuilder
-        .select(['md.cantidad as md_cantidad', 'm.tipo as m_tipo'])
-        .getRawMany();
-
     const entradasRow = await this.movimientoDetalleRepository
       .createQueryBuilder('md')
       .innerJoin('md.movimiento', 'm')
