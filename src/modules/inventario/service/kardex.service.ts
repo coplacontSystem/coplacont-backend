@@ -4,6 +4,10 @@ import { TipoMovimiento } from 'src/modules/movimientos/enum/tipo-movimiento.enu
 import { plainToInstance } from 'class-transformer';
 import { InventarioRepository } from '../repository';
 import { KardexCalculationService } from './kardex-calculation.service';
+import type {
+  KardexMovement,
+  KardexResult,
+} from './kardex-calculation.service';
 import { PeriodoContableService } from 'src/modules/periodos/service';
 
 @Injectable()
@@ -72,17 +76,21 @@ export class KardexService {
     const metodoValoracion = configuracionPeriodo.metodoCalculoCosto;
 
     // Usar KardexCalculationService para cálculo dinámico
-    const kardexResult = await this.kardexCalculationService.generarKardex(
-      idInventario,
-      fechaInicioDate || new Date('1900-01-01'), // Si no hay fecha inicio, usar fecha muy antigua
-      fechaFinDate || new Date(), // Si no hay fecha fin, usar fecha actual
-      metodoValoracion,
-    );
+    const kardexResult: KardexResult | null =
+      await this.kardexCalculationService.generarKardex(
+        idInventario,
+        fechaInicioDate || new Date('1900-01-01'), // Si no hay fecha inicio, usar fecha muy antigua
+        fechaFinDate || new Date(), // Si no hay fecha fin, usar fecha actual
+        metodoValoracion,
+      );
+    console.log('kardexResult', kardexResult);
 
     // Log de conteo y rango de fechas en movimientos calculados
     const totalMov = kardexResult?.movimientos?.length ?? 0;
-    const firstDate = totalMov > 0 ? kardexResult!.movimientos[0].fecha : undefined;
-    const lastDate = totalMov > 0 ? kardexResult!.movimientos[totalMov - 1].fecha : undefined;
+    const firstDate =
+      totalMov > 0 ? kardexResult!.movimientos[0].fecha : undefined;
+    const lastDate =
+      totalMov > 0 ? kardexResult!.movimientos[totalMov - 1].fecha : undefined;
     this.logger.log(
       `✅ [KARDEX-TRACE] Movimientos=${totalMov} firstISO=${firstDate ? firstDate.toISOString() : 'null'} lastISO=${lastDate ? lastDate.toISOString() : 'null'}`,
     );
@@ -104,57 +112,65 @@ export class KardexService {
     }
 
     // Convertir movimientos de KardexCalculationService al formato esperado por el DTO
-    const movimientosFormateados = kardexResult.movimientos.map((mov, idx) => {
-      const f = mov.fecha;
-      this.logger.log(
-        `🧭 [KARDEX-TRACE] Mov[${idx}] fechaISO=${f.toISOString()} fechaLocal=${f.toString()} offset=${f.getTimezoneOffset()} formatted=${this.formatDate(f)} tipo=${mov.tipoMovimiento} comprob=${mov.tipoComprobante ?? ''} nro=${mov.numeroComprobante ?? ''}`,
-      );
-      console.log(
-        `[KARDEX-CONSOLE] Mov[${idx}] fechaISO=${f.toISOString()} fechaLocal=${f.toString()} hrsLocal=${f.getHours()} hrsUTC=${f.getUTCHours()} offset=${f.getTimezoneOffset()} formatted=${this.formatDate(f)} tipo=${mov.tipoMovimiento} comprob=${mov.tipoComprobante ?? ''} nro=${mov.numeroComprobante ?? ''}`,
-      );
-      const movimientoDto: {
-        fecha: string;
-        tipo: 'Entrada' | 'Salida';
-        tComprob: string;
-        nComprobante: string;
-        cantidad: number;
-        saldo: number;
-        costoUnitario: number;
-        costoTotal: number;
-        detallesSalida?: Array<{
-          id: number;
-          idLote: number;
-          costoUnitarioDeLote: number;
+    const movimientosFormateados = kardexResult.movimientos.map(
+      (mov: KardexMovement, idx) => {
+        const f = mov.fecha;
+        this.logger.log(
+          `🧭 [KARDEX-TRACE] Mov[${idx}] fechaISO=${f.toISOString()} fechaLocal=${f.toString()} offset=${f.getTimezoneOffset()} formatted=${this.formatDate(f)} tipo=${mov.tipoMovimiento} comprob=${mov.tipoComprobante ?? ''} nro=${mov.numeroComprobante ?? ''}`,
+        );
+        console.log(
+          `[KARDEX-CONSOLE] Mov[${idx}] fechaISO=${f.toISOString()} fechaLocal=${f.toString()} hrsLocal=${f.getHours()} hrsUTC=${f.getUTCHours()} offset=${f.getTimezoneOffset()} formatted=${this.formatDate(f)} tipo=${mov.tipoMovimiento} comprob=${mov.tipoComprobante ?? ''} nro=${mov.numeroComprobante ?? ''}`,
+        );
+        const movimientoDto: {
+          fecha: string;
+          tipo: 'Entrada' | 'Salida';
+          tComprob: string;
+          tOperacion: string;
+          nComprobante: string;
           cantidad: number;
-        }>;
-      } = {
-        fecha: this.formatDate(mov.fecha),
-        tipo:
-          mov.tipoMovimiento === TipoMovimiento.ENTRADA ? 'Entrada' : 'Salida',
-        tComprob: mov.tipoComprobante || '',
-        nComprobante: mov.numeroComprobante || '',
-        cantidad: mov.cantidad ? Number(mov.cantidad.toFixed(4)) : 0,
-        saldo: mov.cantidadSaldo ? Number(mov.cantidadSaldo.toFixed(4)) : 0,
-        costoUnitario: mov.costoUnitario
-          ? Number(mov.costoUnitario.toFixed(4))
-          : 0,
-        costoTotal: mov.costoTotal ? Number(mov.costoTotal.toFixed(8)) : 0,
-      };
-
-      // Agregar detalles de salida si existen
-      if (mov.detallesSalida && mov.detallesSalida.length > 0) {
-        movimientoDto.detallesSalida = mov.detallesSalida.map((detalle) => ({
-          id: detalle.idLote, // Usar idLote como id para compatibilidad
-          idLote: detalle.idLote,
-          costoUnitarioDeLote: detalle.costoUnitarioDeLote
-            ? Number(detalle.costoUnitarioDeLote.toFixed(4))
+          saldo: number;
+          costoUnitario: number;
+          costoTotal: number;
+          detallesSalida?: Array<{
+            id: number;
+            idLote: number;
+            costoUnitarioDeLote: number;
+            cantidad: number;
+          }>;
+        } = {
+          fecha: this.formatDate(mov.fecha),
+          tipo:
+            mov.tipoMovimiento === TipoMovimiento.ENTRADA
+              ? 'Entrada'
+              : 'Salida',
+          tComprob: mov.tipoComprobanteCodigo || 'No especificado',
+          tOperacion: mov.tipoOperacionCodigo || 'No especificado',
+          nComprobante: mov.numeroComprobante || 'No especificado',
+          cantidad: mov.cantidad ? Number(mov.cantidad.toFixed(4)) : 0,
+          saldo: mov.cantidadSaldo ? Number(mov.cantidadSaldo.toFixed(4)) : 0,
+          costoUnitario: mov.costoUnitario
+            ? Number(mov.costoUnitario.toFixed(4))
             : 0,
-          cantidad: detalle.cantidad ? Number(detalle.cantidad.toFixed(4)) : 0,
-        }));
-      }
+          costoTotal: mov.costoTotal ? Number(mov.costoTotal.toFixed(8)) : 0,
+        };
 
-      return movimientoDto;
-    });
+        // Agregar detalles de salida si existen
+        if (mov.detallesSalida && mov.detallesSalida.length > 0) {
+          movimientoDto.detallesSalida = mov.detallesSalida.map((detalle) => ({
+            id: detalle.idLote, // Usar idLote como id para compatibilidad
+            idLote: detalle.idLote,
+            costoUnitarioDeLote: detalle.costoUnitarioDeLote
+              ? Number(detalle.costoUnitarioDeLote.toFixed(4))
+              : 0,
+            cantidad: detalle.cantidad
+              ? Number(detalle.cantidad.toFixed(4))
+              : 0,
+          }));
+        }
+
+        return movimientoDto;
+      },
+    );
 
     // Calcular saldo inicial basado en el primer movimiento o valores por defecto
     const primerMovimiento = kardexResult.movimientos[0];

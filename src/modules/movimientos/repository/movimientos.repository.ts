@@ -10,6 +10,7 @@ import { EstadoMovimiento } from '../enum/estado-movimiento.enum';
 import { Producto } from '../../productos/entities/producto.entity';
 import { Almacen } from 'src/modules/almacen/entities/almacen.entity';
 import { Inventario, InventarioLote } from 'src/modules/inventario/entities';
+import { Comprobante } from 'src/modules/comprobantes/entities/comprobante';
 import { StockCalculationService } from 'src/modules/inventario/service/stock-calculation.service';
 import { StockCacheService } from 'src/modules/inventario/service/stock-cache.service';
 
@@ -55,14 +56,37 @@ export class MovimientosRepository {
     createMovimientoDto: CreateMovimientoDto,
     manager: EntityManager,
   ): Promise<Movimiento> {
-    // Crear el movimiento principal
+    // Resolver códigos de Tabla 12 (tipo operación) y Tabla 10 (tipo comprobante) desde el comprobante relacionado
+    let codigoTabla12: string | undefined;
+    let codigoTabla10: string | undefined;
+    let numeroDocumento: string | undefined =
+      createMovimientoDto.numeroDocumento;
+
+    if (createMovimientoDto.idComprobante) {
+      const comprobante = await manager.findOne(Comprobante, {
+        where: { idComprobante: createMovimientoDto.idComprobante },
+        relations: ['tipoOperacion', 'tipoComprobante'],
+      });
+
+      if (comprobante) {
+        codigoTabla12 = comprobante.tipoOperacion?.codigo;
+        codigoTabla10 = comprobante.tipoComprobante?.codigo;
+        if (!numeroDocumento && comprobante.serie && comprobante.numero) {
+          numeroDocumento = `${comprobante.serie}-${comprobante.numero}`;
+        }
+      }
+    }
+
+    // Crear el movimiento principal con códigos y número de documento resueltos
     const movimiento = manager.create(Movimiento, {
       tipo: createMovimientoDto.tipo,
       fecha: new Date(createMovimientoDto.fecha),
-      numeroDocumento: createMovimientoDto.numeroDocumento,
+      numeroDocumento,
       observaciones: createMovimientoDto.observaciones,
       estado: createMovimientoDto.estado,
       idComprobante: createMovimientoDto.idComprobante,
+      codigoTabla12,
+      codigoTabla10,
     });
 
     const savedMovimiento = await manager.save(Movimiento, movimiento);

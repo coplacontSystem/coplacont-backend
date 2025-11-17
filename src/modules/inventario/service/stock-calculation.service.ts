@@ -149,7 +149,7 @@ export class StockCalculationService {
     const ajustes = parseFloat(String(ajustesRow?.total ?? 0)) || 0;
 
     const tieneMovimientos = entradas > 0 || salidas > 0 || ajustes > 0;
-    let cantidadActual = tieneMovimientos
+    const cantidadActual = tieneMovimientos
       ? entradas - salidas + ajustes
       : Number(lote.cantidadInicial) || 0;
 
@@ -260,10 +260,12 @@ export class StockCalculationService {
       .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
       .getRawOne<{ total: string | number }>();
 
-    const salidasFicticias = parseFloat(String(salidasFicticiasRow?.total ?? 0)) || 0;
+    const salidasFicticias =
+      parseFloat(String(salidasFicticiasRow?.total ?? 0)) || 0;
     const stockTotalAjustado = Math.max(0, stockTotal - salidasFicticias);
 
-    const costoPromedioActual = stockTotalAjustado > 0 ? valorTotal / stockTotalAjustado : 0;
+    const costoPromedioActual =
+      stockTotalAjustado > 0 ? valorTotal / stockTotalAjustado : 0;
 
     this.logger.log(
       `✅ [STOCK-TRACE] Inventario=${idInventario} StockTotal=${stockTotalAjustado} CostoPromedio=${costoPromedioActual} ValorTotal=${valorTotal}`,

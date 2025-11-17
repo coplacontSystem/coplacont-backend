@@ -191,8 +191,7 @@ export class LoteCreationService {
           Number(loteReciente.cantidadInicial) === Number(detalle.cantidad) ||
           Number(loteReciente.cantidadInicial) === 0;
         const costoUnitarioValido =
-          Number(loteReciente.costoUnitario) ===
-          Number(detalle.precioUnitario);
+          Number(loteReciente.costoUnitario) === Number(detalle.precioUnitario);
         if (!cantidadInicialValida || !costoUnitarioValido) {
           return false;
         }

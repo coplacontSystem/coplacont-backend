@@ -43,6 +43,22 @@ export class Movimiento {
   numeroDocumento: string;
 
   @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    comment: 'Código de la tabla 12',
+  })
+  codigoTabla12?: string;
+
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    comment: 'Código de la tabla 10',
+  })
+  codigoTabla10?: string;
+
+  @Column({
     type: 'text',
     nullable: true,
     comment: 'Observaciones del movimiento',

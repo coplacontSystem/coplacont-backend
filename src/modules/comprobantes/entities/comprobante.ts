@@ -44,7 +44,11 @@ export class Comprobante {
   tipoComprobante: TablaDetalle;
 
   //Manual
-  @Column({ type: 'timestamp', nullable: true, default: () => 'CURRENT_TIMESTAMP' })
+  @Column({
+    type: 'timestamp',
+    nullable: true,
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   fechaEmision: Date;
 
   //Manual

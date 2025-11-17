@@ -74,15 +74,15 @@ export class TransferenciasService {
       const tipoOperacionEntrada = await this.tablaDetalleRepository.findOne({
         where: { idTablaDetalle: 30 },
       });
-      console.log('tipoOperacionEntrada',tipoOperacionEntrada);
+      console.log('tipoOperacionEntrada', tipoOperacionEntrada);
       const tipoOperacionSalida = await this.tablaDetalleRepository.findOne({
         where: { idTablaDetalle: 31 },
       });
-      console.log('tipoOperacionSalida',tipoOperacionSalida);
+      console.log('tipoOperacionSalida', tipoOperacionSalida);
       const tipoComprobanteEspecial = await this.tablaDetalleRepository.findOne(
         { where: { idTablaDetalle: 29 } },
       );
-      console.log('tipoComprobanteEspecial',tipoComprobanteEspecial);
+      console.log('tipoComprobanteEspecial', tipoComprobanteEspecial);
 
       if (
         !tipoOperacionEntrada ||

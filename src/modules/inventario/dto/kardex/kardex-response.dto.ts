@@ -59,11 +59,21 @@ export class KardexReportMovementDto {
    * Tipo de comprobante
    */
   @ApiProperty({
-    description: 'Tipo de comprobante',
-    example: 'Factura',
+    description: 'Código del tipo de comprobante',
+    example: '01',
   })
   @Expose()
   tComprob: string;
+
+  /**
+   * Tipo de operación
+   */
+  @ApiProperty({
+    description: 'Código del tipo de operación',
+    example: '02',
+  })
+  @Expose()
+  tOperacion: string;
 
   /**
    * Número de comprobante

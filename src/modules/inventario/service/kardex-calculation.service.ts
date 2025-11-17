@@ -15,8 +15,10 @@ import { StockCalculationService } from './stock-calculation.service';
 export interface KardexMovement {
   fecha: Date;
   tipoOperacion: string; // Ahora es string en lugar de enum
+  tipoOperacionCodigo?: string;
   tipoMovimiento: TipoMovimiento;
   tipoComprobante?: string;
+  tipoComprobanteCodigo?: string;
   numeroComprobante?: string;
   cantidad: number;
   costoUnitario: number;
@@ -183,8 +185,14 @@ export class KardexCalculationService {
         'm.tipo as tipomovimiento',
         'm.fecha as m_fecha',
         'm.numeroDocumento as m_numeroDocumento',
+        'm.codigoTabla12 as m_codigo_tabla12',
+        'm.codigoTabla10 as m_codigo_tabla10',
         'to.descripcion as c_tipoOperacion',
+        'to.codigo as c_tipoOperacion_codigo',
         'tc.descripcion as c_tipoComprobante',
+        'tc.codigo as c_tipoComprobante_codigo',
+        'c.serie as c_serie',
+        'c.numero as c_numero',
         'c.correlativo as m_correlativo',
       ])
       .orderBy('m.fecha', 'ASC')
@@ -348,9 +356,15 @@ export class KardexCalculationService {
     return {
       fecha: new Date(mov.m_fecha),
       tipoOperacion: mov.c_tipoOperacion,
+      tipoOperacionCodigo: mov.c_tipoOperacion_codigo || mov.m_codigo_tabla12,
       tipoMovimiento: mov.tipomovimiento,
       tipoComprobante: mov.c_tipoComprobante,
-      numeroComprobante: mov.m_numeroDocumento,
+      tipoComprobanteCodigo:
+        mov.c_tipoComprobante_codigo || mov.m_codigo_tabla10,
+      numeroComprobante:
+        mov.c_serie && mov.c_numero
+          ? `${mov.c_serie}-${mov.c_numero}`
+          : mov.m_numeroDocumento,
       cantidad,
       costoUnitario,
       costoTotal,
@@ -395,9 +409,16 @@ export class KardexCalculationService {
       return {
         fecha: new Date(mov.m_fecha),
         tipoOperacion: mov.c_tipoOperacion,
+        tipoOperacionCodigo:
+          mov.c_tipoOperacion_codigo || mov.m_codigo_tabla12,
         tipoMovimiento: mov.tipomovimiento,
         tipoComprobante: mov.c_tipoComprobante,
-        numeroComprobante: mov.m_numeroDocumento,
+        tipoComprobanteCodigo:
+          mov.c_tipoComprobante_codigo || mov.m_codigo_tabla10,
+        numeroComprobante:
+          mov.c_serie && mov.c_numero
+            ? `${mov.c_serie}-${mov.c_numero}`
+            : mov.m_numeroDocumento,
         cantidad,
         costoUnitario,
         costoTotal,
@@ -440,9 +461,16 @@ export class KardexCalculationService {
         const movimientoLote: KardexMovement = {
           fecha: new Date(mov.m_fecha),
           tipoOperacion: mov.c_tipoOperacion,
+          tipoOperacionCodigo:
+            mov.c_tipoOperacion_codigo || mov.m_codigo_tabla12,
           tipoMovimiento: mov.tipomovimiento,
           tipoComprobante: mov.c_tipoComprobante,
-          numeroComprobante: mov.m_numeroDocumento,
+          tipoComprobanteCodigo:
+            mov.c_tipoComprobante_codigo || mov.m_codigo_tabla10,
+          numeroComprobante:
+            mov.c_serie && mov.c_numero
+              ? `${mov.c_serie}-${mov.c_numero}`
+              : mov.m_numeroDocumento,
           cantidad: cantidadLote,
           costoUnitario: costoUnitarioLote,
           costoTotal: costoTotalLote,
