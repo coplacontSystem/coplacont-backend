@@ -34,8 +34,28 @@ export class EntidadService {
           persona: { id: personaId },
         },
       });
-
       if (existingPerson) {
+        const wantsCliente = createPersonDto.esCliente === true;
+        const wantsProveedor = createPersonDto.esProveedor === false;
+        const isCurrentlyCliente = existingPerson.esCliente === true;
+        const isCurrentlyProveedor = existingPerson.esProveedor === true;
+
+        if (
+          wantsCliente &&
+          wantsProveedor &&
+          !isCurrentlyCliente &&
+          isCurrentlyProveedor
+        ) {
+          existingPerson.esCliente = true;
+          const updatedPerson =
+            await this.personRepository.save(existingPerson);
+          const responseDto = this.mapToResponseDto(updatedPerson);
+          return ApiResponseDto.success(
+            'Entidad actualizada exitosamente',
+            responseDto,
+          );
+        }
+
         return ApiResponseDto.error(
           `Ya existe una entidad con el número de documento ${createPersonDto.numeroDocumento} en esta empresa`,
         );
