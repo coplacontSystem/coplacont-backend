@@ -36,10 +36,24 @@ export class MovimientoFactory {
       precioYcantidadPorLote,
     );
 
+    const em = new Date(comprobante.fechaEmision as any);
+    const now = new Date();
+    const movementDate = new Date(
+      Date.UTC(
+        em.getUTCFullYear(),
+        em.getUTCMonth(),
+        em.getUTCDate(),
+        now.getUTCHours(),
+        now.getUTCMinutes(),
+        now.getUTCSeconds(),
+        now.getUTCMilliseconds(),
+      ),
+    );
+
     return {
       numeroDocumento: comprobante.serie + '-' + comprobante.numero,
       tipo: tipoMovimiento,
-      fecha: comprobante.fechaEmision,
+      fecha: movementDate,
       observaciones: `Movimiento generado desde comprobante ${comprobante.serie}-${comprobante.numero}`,
       estado: EstadoMovimiento.PROCESADO,
       idComprobante: comprobante.idComprobante,

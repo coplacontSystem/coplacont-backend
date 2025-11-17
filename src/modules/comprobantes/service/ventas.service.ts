@@ -25,7 +25,7 @@ export class VentasService {
     // Usar directamente el idTablaDetalle para VENTA (12) de la Tabla 12
     const comprobantes = await this.comprobanteRepository.find({
       where: {
-        tipoOperacion: { idTablaDetalle: 12 }, // ID 12 para VENTA en Tabla 12
+        tipoOperacion: { idTablaDetalle: 13 }, // ID 13 para VENTA en Tabla 12
         persona: { id: personaId },
       },
       relations: [

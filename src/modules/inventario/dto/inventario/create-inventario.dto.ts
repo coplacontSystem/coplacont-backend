@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsPositive } from 'class-validator';
+import { IsNumber, IsPositive, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /**
@@ -31,5 +31,31 @@ export class CreateInventarioDto {
   @Type(() => Number)
   idProducto: number;
 
-  // stockActual eliminado - ahora se calcula dinámicamente a través de movimientos
+  /**
+   * Stock inicial opcional para crear un movimiento de entrada
+   */
+  @ApiProperty({
+    description: 'Stock inicial del inventario (opcional)',
+    example: 10,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 4 }, { message: 'El stock debe ser numérico' })
+  @IsPositive({ message: 'El stock inicial debe ser positivo' })
+  @Type(() => Number)
+  stockInicial?: number;
+
+  /**
+   * Precio unitario asociado al stock inicial (opcional)
+   */
+  @ApiProperty({
+    description: 'Precio unitario del stock inicial (opcional)',
+    example: 25.5,
+    required: false,
+  })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 4 }, { message: 'El precio debe ser numérico' })
+  @IsPositive({ message: 'El precio unitario debe ser positivo' })
+  @Type(() => Number)
+  precioUnitario?: number;
 }

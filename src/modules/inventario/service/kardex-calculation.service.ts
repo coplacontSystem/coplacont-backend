@@ -175,17 +175,17 @@ export class KardexCalculationService {
       .andWhere('m.fecha <= :fechaHasta', { fechaHasta })
       .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
       .select([
-        'md.id as idMovimientoDetalle',
-        'md.cantidad',
-        'md.idLote',
-        'md.idInventario',
-        'm.id as idMovimiento',
-        'm.tipo as tipoMovimiento',
-        'm.fecha',
-        'm.numeroDocumento',
-        'to.descripcion as tipoOperacion',
-        'tc.descripcion as tipoComprobante',
-        'c.correlativo',
+        'md.id as idmovimientodetalle',
+        'md.cantidad as md_cantidad',
+        'md.idLote as md_id_lote',
+        'md.idInventario as md_id_inventario',
+        'm.id as idmovimiento',
+        'm.tipo as tipomovimiento',
+        'm.fecha as m_fecha',
+        'm.numeroDocumento as m_numeroDocumento',
+        'to.descripcion as c_tipoOperacion',
+        'tc.descripcion as c_tipoComprobante',
+        'c.correlativo as m_correlativo',
       ])
       .orderBy('m.fecha', 'ASC')
       .addOrderBy('m.id', 'ASC')
@@ -257,7 +257,7 @@ export class KardexCalculationService {
 
       const esEntrada = this.esMovimientoEntrada(
         mov.tipomovimiento,
-        mov.tipooperacion,
+        mov.c_tipoOperacion,
       );
 
       let movimientoKardex: KardexMovement;

@@ -61,7 +61,7 @@ export class LoteCreationService {
             cantidad: Number(detalle.cantidad),
           });
         } else {
-          // Para ventas, calcular costo usando el nuevo sistema dinámico
+          // Para ventas, calcular costo usando el método de valoración
           const costoUnitario =
             await this.stockCalculationService.calcularCostoUnitarioVenta(
               detalle.inventario.id,
@@ -72,36 +72,22 @@ export class LoteCreationService {
 
           costosUnitariosDeDetalles.push(costoUnitario);
 
-          // Obtener información de lotes consumidos para FIFO
-          if (metodoValoracion === MetodoValoracion.FIFO) {
-            const consumoFIFO =
-              await this.stockCalculationService.calcularConsumoFIFO(
-                detalle.inventario.id,
-                Number(detalle.cantidad),
-                fechaEmision,
-              );
-
-            lotesUsados.push(
-              ...consumoFIFO.map((consumo) => ({
-                idLote: consumo.idLote,
-                costoUnitarioDeLote: consumo.costoUnitario,
-                cantidad: consumo.cantidad,
-              })),
+          // Independientemente del método de valoración, registrar consumo físico por lotes usando FIFO
+          // Esto asegura que el stock físico se descuente de lotes reales aunque el costo sea PROMEDIO
+          const consumoFIFO =
+            await this.stockCalculationService.calcularConsumoFIFO(
+              detalle.inventario.id,
+              Number(detalle.cantidad),
+              fechaEmision,
             );
-          } else {
-            // Para PROMEDIO, usar un lote ficticio con el costo promedio
-            const costoPromedio =
-              await this.stockCalculationService.calcularCostoPromedio(
-                detalle.inventario.id,
-                fechaEmision,
-              );
 
-            lotesUsados.push({
-              idLote: 0, // Lote ficticio para promedio
-              costoUnitarioDeLote: costoPromedio,
-              cantidad: Number(detalle.cantidad),
-            });
-          }
+          lotesUsados.push(
+            ...consumoFIFO.map((consumo) => ({
+              idLote: consumo.idLote,
+              costoUnitarioDeLote: consumo.costoUnitario,
+              cantidad: consumo.cantidad,
+            })),
+          );
 
           // Invalidar caché después de la venta
           this.stockCacheService.invalidateInventario(detalle.inventario.id);
@@ -166,7 +152,7 @@ export class LoteCreationService {
     const lote = this.loteRepository.create({
       inventario: inventario,
       numeroLote: `LOTE-${Date.now()}-${inventario.id}-${inventario.producto.id}`,
-      cantidadInicial: cantidad,
+      cantidadInicial: 0,
       costoUnitario: precioUnitario,
       fechaIngreso: fechaEmision || new Date(),
       observaciones: `Lote creado automáticamente desde compra - ${detalle.descripcion || 'Sin descripción'}`,
@@ -198,14 +184,16 @@ export class LoteCreationService {
           return false;
         }
 
-        // Validar que el lote tiene los datos correctos
-        if (Number(loteReciente.cantidadInicial) !== Number(detalle.cantidad)) {
-          return false;
-        }
-
-        if (
-          Number(loteReciente.costoUnitario) !== Number(detalle.precioUnitario)
-        ) {
+        // Validar datos del lote: aceptamos dos modalidades
+        // 1) cantidadInicial igual a cantidad del detalle (modo tradicional)
+        // 2) cantidadInicial = 0 y costo unitario correcto (modo movimiento-only)
+        const cantidadInicialValida =
+          Number(loteReciente.cantidadInicial) === Number(detalle.cantidad) ||
+          Number(loteReciente.cantidadInicial) === 0;
+        const costoUnitarioValido =
+          Number(loteReciente.costoUnitario) ===
+          Number(detalle.precioUnitario);
+        if (!cantidadInicialValida || !costoUnitarioValido) {
           return false;
         }
       }

@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventarioLote } from '../entities/inventario-lote.entity';
 import { Inventario } from '../entities/inventario.entity';
 import { MovimientoDetalle } from '../../movimientos/entities/movimiento-detalle.entity';
+import { DetalleSalida } from '../../movimientos/entities/detalle-salida.entity';
 import { TipoMovimiento } from '../../movimientos/enum/tipo-movimiento.enum';
 import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
 import { StockCacheService } from './stock-cache.service';
@@ -56,6 +57,8 @@ export class StockCalculationService {
     private readonly stockCacheService: StockCacheService,
   ) {}
 
+  private readonly logger = new Logger(StockCalculationService.name);
+
   /**
    * Calcula el stock actual de un lote específico
    * @param idLote ID del lote
@@ -91,6 +94,9 @@ export class StockCalculationService {
       return null;
     }
 
+    this.logger.log(
+      `🔍 [STOCK-TRACE] Lote=${idLote} - Inicio cálculo${fechaHasta ? ` hasta ${fechaHasta.toISOString().split('T')[0]}` : ''}`,
+    );
     // Calcular movimientos que afectan este lote
     const queryBuilder = this.movimientoDetalleRepository
       .createQueryBuilder('md')
@@ -107,20 +113,45 @@ export class StockCalculationService {
         .select(['md.cantidad as md_cantidad', 'm.tipo as m_tipo'])
         .getRawMany();
 
-    // Calcular stock actual basado únicamente en movimientos reales
-    // No usar cantidadInicial como stock base, solo movimientos registrados
-    let cantidadActual = 0;
+    const entradasRow = await this.movimientoDetalleRepository
+      .createQueryBuilder('md')
+      .innerJoin('md.movimiento', 'm')
+      .select('COALESCE(SUM(md.cantidad), 0)', 'total')
+      .where('md.idLote = :idLote', { idLote })
+      .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
+      .andWhere('m.tipo = :tipo', { tipo: TipoMovimiento.ENTRADA })
+      .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
+      .getRawOne<{ total: string | number }>();
 
-    for (const mov of movimientos) {
-      const cantidad = Number(mov.md_cantidad);
-      const tipo = mov.m_tipo as TipoMovimiento;
+    const ajustesRow = await this.movimientoDetalleRepository
+      .createQueryBuilder('md')
+      .innerJoin('md.movimiento', 'm')
+      .select('COALESCE(SUM(md.cantidad), 0)', 'total')
+      .where('md.idLote = :idLote', { idLote })
+      .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
+      .andWhere('m.tipo = :tipo', { tipo: TipoMovimiento.AJUSTE })
+      .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
+      .getRawOne<{ total: string | number }>();
 
-      if (tipo === TipoMovimiento.ENTRADA) {
-        cantidadActual += cantidad;
-      } else if (tipo === TipoMovimiento.SALIDA) {
-        cantidadActual -= cantidad;
-      }
-    }
+    const salidasRow = await this.movimientoDetalleRepository
+      .createQueryBuilder('md')
+      .innerJoin('md.movimiento', 'm')
+      .innerJoin(DetalleSalida, 'ds', 'ds.id_movimiento_detalle = md.id')
+      .select('COALESCE(SUM(ds.cantidad), 0)', 'total')
+      .where('ds.id_lote = :idLote', { idLote })
+      .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
+      .andWhere('m.tipo = :tipo', { tipo: TipoMovimiento.SALIDA })
+      .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
+      .getRawOne<{ total: string | number }>();
+
+    const entradas = parseFloat(String(entradasRow?.total ?? 0)) || 0;
+    const salidas = parseFloat(String(salidasRow?.total ?? 0)) || 0;
+    const ajustes = parseFloat(String(ajustesRow?.total ?? 0)) || 0;
+
+    const tieneMovimientos = entradas > 0 || salidas > 0 || ajustes > 0;
+    let cantidadActual = tieneMovimientos
+      ? entradas - salidas + ajustes
+      : Number(lote.cantidadInicial) || 0;
 
     const result = {
       idLote: lote.id,
@@ -130,6 +161,10 @@ export class StockCalculationService {
       fechaIngreso: new Date(lote.fechaIngreso), // Asegurar que sea un objeto Date
       numeroLote: lote.numeroLote,
     };
+
+    this.logger.log(
+      `✅ [STOCK-TRACE] Lote=${idLote} Base=${tieneMovimientos ? 0 : Number(lote.cantidadInicial)} Entradas=${entradas} Salidas=${salidas} Ajustes=${ajustes} Actual=${result.cantidadActual} CostoUnitario=${result.costoUnitario}`,
+    );
 
     // Guardar en caché
     this.stockCacheService.setLoteStock(idLote, fechaHasta, result);
@@ -162,6 +197,9 @@ export class StockCalculationService {
 
       if (!inventario) return null;
 
+      this.logger.log(
+        `⚡ [STOCK-TRACE] Cache Inventario=${idInventario} Stock=${cachedResult.stockActual} CostoPromedio=${cachedResult.costoPromedioActual}`,
+      );
       return {
         idInventario,
         stockActual: cachedResult.stockActual,
@@ -196,6 +234,10 @@ export class StockCalculationService {
     let stockTotal = 0;
     let valorTotal = 0;
 
+    this.logger.log(
+      `🔍 [STOCK-TRACE] Inventario=${idInventario} Lotes=${lotes.length}`,
+    );
+
     for (const lote of lotes) {
       const stockLote = await this.calcularStockLote(lote.id, fechaHasta);
       if (stockLote && stockLote.cantidadActual > 0) {
@@ -205,20 +247,39 @@ export class StockCalculationService {
       }
     }
 
-    const costoPromedioActual = stockTotal > 0 ? valorTotal / stockTotal : 0;
+    // Ajuste por salidas registradas sin asignación de lote (idLote=0)
+    const salidasFicticiasRow = await this.movimientoDetalleRepository
+      .createQueryBuilder('md')
+      .innerJoin('md.movimiento', 'm')
+      .innerJoin(DetalleSalida, 'ds', 'ds.id_movimiento_detalle = md.id')
+      .select('COALESCE(SUM(ds.cantidad), 0)', 'total')
+      .where('md.idInventario = :idInventario', { idInventario })
+      .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
+      .andWhere('m.tipo = :tipo', { tipo: TipoMovimiento.SALIDA })
+      .andWhere('ds.id_lote = 0')
+      .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
+      .getRawOne<{ total: string | number }>();
 
+    const salidasFicticias = parseFloat(String(salidasFicticiasRow?.total ?? 0)) || 0;
+    const stockTotalAjustado = Math.max(0, stockTotal - salidasFicticias);
+
+    const costoPromedioActual = stockTotalAjustado > 0 ? valorTotal / stockTotalAjustado : 0;
+
+    this.logger.log(
+      `✅ [STOCK-TRACE] Inventario=${idInventario} StockTotal=${stockTotalAjustado} CostoPromedio=${costoPromedioActual} ValorTotal=${valorTotal}`,
+    );
     const result = {
       idInventario,
-      stockActual: stockTotal,
+      stockActual: stockTotalAjustado,
       costoPromedioActual,
       lotes: lotesConStock,
     };
 
     // Guardar en caché (solo los datos básicos)
     this.stockCacheService.setInventarioStock(idInventario, fechaHasta, {
-      stockActual: stockTotal,
+      stockActual: stockTotalAjustado,
       costoPromedioActual: costoPromedioActual,
-      valorTotal: stockTotal * costoPromedioActual,
+      valorTotal: stockTotalAjustado * costoPromedioActual,
     });
 
     return result;

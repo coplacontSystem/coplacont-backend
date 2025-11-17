@@ -1,10 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Repository, DataSource, Not, In, EntityManager } from 'typeorm';
 import { Comprobante } from '../entities/comprobante';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateComprobanteDto } from '../dto/comprobante/create-comprobante.dto';
 import { EntidadService } from 'src/modules/entidades/services';
 import { ComprobanteDetalleService } from './comprobante-detalle.service';
+import {
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { ComprobanteTotalesService } from './comprobante-totales.service';
 import { ResponseComprobanteDto } from '../dto/comprobante/response-comprobante.dto';
 import { plainToInstance } from 'class-transformer';
@@ -17,7 +21,7 @@ import { PeriodoContableService } from 'src/modules/periodos/service';
 import { PersonaService } from 'src/modules/users/services/person.service';
 
 @Injectable()
-export class ComprobanteService {
+export class ComprobanteService implements OnModuleInit {
   constructor(
     @InjectRepository(Comprobante)
     private readonly comprobanteRepository: Repository<Comprobante>,
@@ -110,15 +114,31 @@ export class ComprobanteService {
       const periodoActicoDePersona =
         await this.periodoContableService.obtenerPorId(periodoActivoDto.id);
 
-      const fechaEmisionFinal = new Date(createComprobanteDto.fechaEmision);
+      const fechaEmisionParsed = new Date(createComprobanteDto.fechaEmision);
+      const ahora = new Date();
+      const fechaEmisionFinal = new Date(
+        fechaEmisionParsed.getUTCFullYear(),
+        fechaEmisionParsed.getUTCMonth(),
+        fechaEmisionParsed.getUTCDate(),
+        ahora.getHours(),
+        ahora.getMinutes(),
+        ahora.getSeconds(),
+        ahora.getMilliseconds(),
+      );
 
       if (
         fechaEmisionFinal < new Date(periodoActicoDePersona.fechaInicio) ||
         fechaEmisionFinal > new Date(periodoActicoDePersona.fechaFin)
       ) {
-        throw new Error(
-          'Fecha de emision del comprobante no esta dentro del periodo contable de la persona',
-        );
+        throw new BadRequestException({
+          message:
+            'La fecha de emisión del comprobante está fuera del período contable vigente',
+          fechaEmision: fechaEmisionFinal.toISOString(),
+          periodo: {
+            inicio: new Date(periodoActicoDePersona.fechaInicio).toISOString(),
+            fin: new Date(periodoActicoDePersona.fechaFin).toISOString(),
+          },
+        });
       }
 
       // Obtener METODO DE VALUACION CONFIGURADO
@@ -176,7 +196,7 @@ export class ComprobanteService {
 
       // Crea instancia de COMPROBANTE
       const comprobante = queryRunner.manager.create(Comprobante, {
-        fechaEmision: createComprobanteDto.fechaEmision,
+        fechaEmision: fechaEmisionFinal,
         moneda: createComprobanteDto.moneda,
         tipoCambio: createComprobanteDto.tipoCambio,
         serie: createComprobanteDto.serie,
@@ -328,9 +348,15 @@ export class ComprobanteService {
       return plainToInstance(ResponseComprobanteDto, savedWithRelations, {
         excludeExtraneousValues: true,
       });
-    } catch (error) {
+    } catch (error: any) {
       await queryRunner.rollbackTransaction();
-      throw error;
+      if (error && typeof error === 'object' && 'status' in error) {
+        throw error;
+      }
+      throw new InternalServerErrorException({
+        message: 'Error al registrar el comprobante',
+        detalle: error?.message || 'Error desconocido',
+      });
     } finally {
       await queryRunner.release();
     }
@@ -401,5 +427,15 @@ export class ComprobanteService {
    */
   async obtenerPeriodoActivo(personaId: number) {
     return await this.periodoContableService.obtenerPeriodoActivo(personaId);
+  }
+
+  async onModuleInit(): Promise<void> {
+    // Backfill de fechaEmision nula usando fechaRegistro para evitar problemas de NOT NULL
+    await this.comprobanteRepository
+      .createQueryBuilder()
+      .update(Comprobante)
+      .set({ fechaEmision: () => '"fechaRegistro"' })
+      .where('"fechaEmision" IS NULL')
+      .execute();
   }
 }

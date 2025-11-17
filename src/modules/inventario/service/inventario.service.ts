@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import {
@@ -21,6 +22,8 @@ import { TablaDetalle } from '../../comprobantes/entities/tabla-detalle.entity';
 import { MovimientoDetalle } from '../../movimientos/entities/movimiento-detalle.entity';
 import { Movimiento } from '../../movimientos/entities/movimiento.entity';
 import { TipoMovimiento } from '../../movimientos/enum/tipo-movimiento.enum';
+import { EstadoMovimiento } from '../../movimientos/enum/estado-movimiento.enum';
+import { InventarioLoteService } from './inventario-lote.service';
 
 @Injectable()
 export class InventarioService {
@@ -35,12 +38,16 @@ export class InventarioService {
     private readonly movimientoDetalleRepository: Repository<MovimientoDetalle>,
     @InjectRepository(Movimiento)
     private readonly movimientoRepository: Repository<Movimiento>,
+    private readonly inventarioLoteService: InventarioLoteService,
   ) {}
+
+  private readonly logger = new Logger(InventarioService.name);
 
   async create(
     createInventarioDto: CreateInventarioDto,
   ): Promise<ResponseInventarioDto> {
-    const { idAlmacen, idProducto } = createInventarioDto;
+    const { idAlmacen, idProducto, stockInicial, precioUnitario } =
+      createInventarioDto;
 
     await this.validateAlmacenExists(idAlmacen);
     await this.validateProductoExists(idProducto);
@@ -55,6 +62,39 @@ export class InventarioService {
       producto: producto!,
     });
 
+    // Si se proporcionó stock inicial y precio, registrar lote de entrada
+    if (
+      stockInicial &&
+      precioUnitario &&
+      stockInicial > 0 &&
+      precioUnitario > 0
+    ) {
+      const lote = await this.inventarioLoteService.create({
+        idInventario: inventario.id,
+        fechaIngreso: new Date().toISOString().split('T')[0],
+        cantidadInicial: stockInicial,
+        costoUnitario: precioUnitario,
+      });
+
+      const movimiento = this.movimientoRepository.create({
+        tipo: TipoMovimiento.ENTRADA,
+        fecha: new Date(),
+        numeroDocumento: 'INV-INIT',
+        observaciones: 'Stock inicial de inventario',
+        estado: EstadoMovimiento.PROCESADO,
+        idComprobante: undefined,
+      });
+      const savedMovimiento = await this.movimientoRepository.save(movimiento);
+
+      const detalle = this.movimientoDetalleRepository.create({
+        idMovimiento: savedMovimiento.id,
+        idInventario: inventario.id,
+        idLote: lote.id,
+        cantidad: stockInicial,
+      });
+      await this.movimientoDetalleRepository.save(detalle);
+    }
+
     return this.mapToResponseDto(inventario);
   }
 
@@ -67,13 +107,19 @@ export class InventarioService {
   async findAll(personaId?: number): Promise<ResponseInventarioDto[]> {
     const inventarios = await this.inventarioRepository.findAll(personaId);
 
-    // Calcular stock dinámicamente para cada inventario
     const inventariosWithStock = await Promise.all(
       inventarios.map(async (inventario) => {
-        const stockActual = personaId
-          ? await this.calculateStock(inventario.id, personaId)
-          : 0; // Si no hay personaId, no podemos calcular el stock
-
+        this.logger.log(
+          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
+        );
+        const stockResult =
+          await this.stockCalculationService.calcularStockInventario(
+            inventario.id,
+          );
+        const stockActual = stockResult?.stockActual ?? 0;
+        this.logger.log(
+          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
+        );
         return this.mapToResponseDto(inventario, stockActual);
       }),
     );
@@ -87,20 +133,21 @@ export class InventarioService {
    * @param personaId - ID de la empresa (opcional, requerido para cálculo de stock)
    * @returns Promise<ResponseInventarioDto> Inventario con stock actual
    */
-  async findOne(
-    id: number,
-    personaId?: number,
-  ): Promise<ResponseInventarioDto> {
+  async findOne(id: number): Promise<ResponseInventarioDto> {
     const inventario = await this.inventarioRepository.findById(id);
     if (!inventario) {
       throw new NotFoundException(`Inventario con ID ${id} no encontrado`);
     }
 
-    // Calcular stock dinámicamente si se proporciona personaId
-    const stockActual = personaId
-      ? await this.calculateStock(inventario.id, personaId)
-      : undefined;
-
+    this.logger.log(
+      `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
+    );
+    const stockResult =
+      await this.stockCalculationService.calcularStockInventario(inventario.id);
+    const stockActual = stockResult?.stockActual;
+    this.logger.log(
+      `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual ?? 0} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
+    );
     return this.mapToResponseDto(inventario, stockActual);
   }
 
@@ -113,22 +160,23 @@ export class InventarioService {
       idAlmacen,
       personaId,
     );
-
-    // Calcular stock dinámicamente para cada inventario si se proporciona personaId
-    if (personaId) {
-      const inventariosWithStock = await Promise.all(
-        inventarios.map(async (inventario) => {
-          const stockActual = await this.calculateStock(
+    const inventariosWithStock = await Promise.all(
+      inventarios.map(async (inventario) => {
+        this.logger.log(
+          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
+        );
+        const stockResult =
+          await this.stockCalculationService.calcularStockInventario(
             inventario.id,
-            personaId,
           );
-          return this.mapToResponseDto(inventario, stockActual);
-        }),
-      );
-      return inventariosWithStock;
-    }
-
-    return inventarios.map((inventario) => this.mapToResponseDto(inventario));
+        const stockActual = stockResult?.stockActual ?? 0;
+        this.logger.log(
+          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
+        );
+        return this.mapToResponseDto(inventario, stockActual);
+      }),
+    );
+    return inventariosWithStock;
   }
 
   async findByProducto(
@@ -140,22 +188,23 @@ export class InventarioService {
       idProducto,
       personaId,
     );
-
-    // Calcular stock dinámicamente para cada inventario si se proporciona personaId
-    if (personaId) {
-      const inventariosWithStock = await Promise.all(
-        inventarios.map(async (inventario) => {
-          const stockActual = await this.calculateStock(
+    const inventariosWithStock = await Promise.all(
+      inventarios.map(async (inventario) => {
+        this.logger.log(
+          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
+        );
+        const stockResult =
+          await this.stockCalculationService.calcularStockInventario(
             inventario.id,
-            personaId,
           );
-          return this.mapToResponseDto(inventario, stockActual);
-        }),
-      );
-      return inventariosWithStock;
-    }
-
-    return inventarios.map((inventario) => this.mapToResponseDto(inventario));
+        const stockActual = stockResult?.stockActual ?? 0;
+        this.logger.log(
+          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
+        );
+        return this.mapToResponseDto(inventario, stockActual);
+      }),
+    );
+    return inventariosWithStock;
   }
 
   /**

@@ -66,18 +66,12 @@ export class ProductoService {
         personaId,
       );
     } else {
-      // Verificar si ya existe un producto con el mismo código en la misma empresa
       const existingProducto = await this.productoRepository.findOne({
-        where: {
-          codigo,
-          persona: { id: personaId },
-        },
+        where: { codigo },
       });
 
       if (existingProducto) {
-        throw new ConflictException(
-          'Ya existe un producto con este código en su empresa',
-        );
+        throw new ConflictException('Ya existe un producto con este código');
       }
     }
 
@@ -440,7 +434,6 @@ export class ProductoService {
     // Prefijo de tipo
     const tipoPrefix = tipo === TipoCategoria.PRODUCTO ? 'PROD' : 'SERV';
 
-    // Buscar el último número secuencial para esta combinación en la misma empresa
     const lastProduct = await this.productoRepository
       .createQueryBuilder('producto')
       .leftJoin('producto.persona', 'persona')
@@ -453,16 +446,25 @@ export class ProductoService {
 
     let nextNumber = 1;
     if (lastProduct && lastProduct.codigo) {
-      // Extraer el número del último código
       const match = lastProduct.codigo.match(/-([0-9]+)$/);
       if (match) {
         nextNumber = parseInt(match[1]) + 1;
       }
     }
 
-    // Formatear número con ceros a la izquierda (4 dígitos)
-    const formattedNumber = nextNumber.toString().padStart(4, '0');
+    for (let attempts = 0; attempts < 10000; attempts++) {
+      const formattedNumber = nextNumber.toString().padStart(4, '0');
+      const candidate = `${categoriaPrefix}-${tipoPrefix}-${formattedNumber}`;
+      const exists = await this.productoRepository.findOne({
+        where: { codigo: candidate },
+      });
+      if (!exists) {
+        return candidate;
+      }
+      nextNumber++;
+    }
 
+    const formattedNumber = nextNumber.toString().padStart(4, '0');
     return `${categoriaPrefix}-${tipoPrefix}-${formattedNumber}`;
   }
 }

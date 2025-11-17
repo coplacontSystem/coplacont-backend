@@ -72,14 +72,17 @@ export class TransferenciasService {
       ).metodoCalculoCosto;
 
       const tipoOperacionEntrada = await this.tablaDetalleRepository.findOne({
-        where: { idTablaDetalle: 29 },
-      });
-      const tipoOperacionSalida = await this.tablaDetalleRepository.findOne({
         where: { idTablaDetalle: 30 },
       });
+      console.log('tipoOperacionEntrada',tipoOperacionEntrada);
+      const tipoOperacionSalida = await this.tablaDetalleRepository.findOne({
+        where: { idTablaDetalle: 31 },
+      });
+      console.log('tipoOperacionSalida',tipoOperacionSalida);
       const tipoComprobanteEspecial = await this.tablaDetalleRepository.findOne(
-        { where: { idTablaDetalle: 31 } },
+        { where: { idTablaDetalle: 29 } },
       );
+      console.log('tipoComprobanteEspecial',tipoComprobanteEspecial);
 
       if (
         !tipoOperacionEntrada ||
@@ -112,8 +115,19 @@ export class TransferenciasService {
       correlativoSalida.ultimoNumero += 1;
       await manager.save(correlativoSalida);
 
+      const fechaSalidaParsed = new Date(dto.fechaEmision);
+      const ahoraSalida = new Date();
+      const fechaEmisionSalida = new Date(
+        fechaSalidaParsed.getUTCFullYear(),
+        fechaSalidaParsed.getUTCMonth(),
+        fechaSalidaParsed.getUTCDate(),
+        ahoraSalida.getHours(),
+        ahoraSalida.getMinutes(),
+        ahoraSalida.getSeconds(),
+        ahoraSalida.getMilliseconds(),
+      );
       const comprobanteSalida = manager.create(Comprobante, {
-        fechaEmision: dto.fechaEmision,
+        fechaEmision: fechaEmisionSalida,
         moneda: dto.moneda,
         tipoCambio: dto.tipoCambio,
         serie: dto.serie,
@@ -200,8 +214,19 @@ export class TransferenciasService {
       correlativoEntrada.ultimoNumero += 1;
       await manager.save(correlativoEntrada);
 
+      const fechaEntradaParsed = new Date(dto.fechaEmision);
+      const ahoraEntrada = new Date();
+      const fechaEmisionEntrada = new Date(
+        fechaEntradaParsed.getUTCFullYear(),
+        fechaEntradaParsed.getUTCMonth(),
+        fechaEntradaParsed.getUTCDate(),
+        ahoraEntrada.getHours(),
+        ahoraEntrada.getMinutes(),
+        ahoraEntrada.getSeconds(),
+        ahoraEntrada.getMilliseconds(),
+      );
       const comprobanteEntrada = manager.create(Comprobante, {
-        fechaEmision: dto.fechaEmision,
+        fechaEmision: fechaEmisionEntrada,
         moneda: dto.moneda,
         tipoCambio: dto.tipoCambio,
         serie: dto.serie,
