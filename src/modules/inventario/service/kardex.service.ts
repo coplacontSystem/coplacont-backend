@@ -74,7 +74,7 @@ export class KardexService {
     const configuracionPeriodo =
       await this.periodoContableService.obtenerConfiguracion(personaId);
     const metodoValoracion = configuracionPeriodo.metodoCalculoCosto;
-
+    console.log('metodoValoracion', metodoValoracion);
     // Usar KardexCalculationService para cálculo dinámico
     const kardexResult: KardexResult | null =
       await this.kardexCalculationService.generarKardex(

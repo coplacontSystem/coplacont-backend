@@ -42,6 +42,31 @@ export class InventarioService {
 
   private readonly logger = new Logger(InventarioService.name);
 
+  /**
+   * Obtiene la fecha hasta basada en el período contable activo del usuario
+   * Si no se puede obtener el período, usa la fecha actual. Normaliza a fin de día (23:59:59.999).
+   * @param personaId ID de la empresa
+   * @returns Fecha hasta normalizada para cálculo de stock
+   */
+  private async getFechaHastaParaPersona(personaId?: number): Promise<Date> {
+    try {
+      if (typeof personaId === 'number') {
+        const periodoActivo =
+          await this.periodoContableService.obtenerPeriodoActivo(personaId);
+        const fechaFin = new Date(periodoActivo.fechaFin);
+        fechaFin.setHours(23, 59, 59, 999);
+        return fechaFin;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo obtener período activo para personaId=${personaId}; usando fecha actual; error=${error}`,
+      );
+    }
+    const hoy = new Date();
+    hoy.setHours(23, 59, 59, 999);
+    return hoy;
+  }
+
   async create(
     createInventarioDto: CreateInventarioDto,
     personaId?: number,
@@ -132,9 +157,11 @@ export class InventarioService {
         this.logger.log(
           `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
         );
+        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
         const stockResult =
           await this.stockCalculationService.calcularStockInventario(
             inventario.id,
+            fechaHasta,
           );
         const stockActual = stockResult?.stockActual ?? 0;
         this.logger.log(
@@ -163,7 +190,10 @@ export class InventarioService {
       `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
     );
     const stockResult =
-      await this.stockCalculationService.calcularStockInventario(inventario.id);
+      await this.stockCalculationService.calcularStockInventario(
+        inventario.id,
+        new Date(),
+      );
     const stockActual = stockResult?.stockActual;
     this.logger.log(
       `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual ?? 0} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
@@ -185,9 +215,11 @@ export class InventarioService {
         this.logger.log(
           `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
         );
+        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
         const stockResult =
           await this.stockCalculationService.calcularStockInventario(
             inventario.id,
+            fechaHasta,
           );
         const stockActual = stockResult?.stockActual ?? 0;
         this.logger.log(
@@ -213,9 +245,11 @@ export class InventarioService {
         this.logger.log(
           `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
         );
+        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
         const stockResult =
           await this.stockCalculationService.calcularStockInventario(
             inventario.id,
+            fechaHasta,
           );
         const stockActual = stockResult?.stockActual ?? 0;
         this.logger.log(

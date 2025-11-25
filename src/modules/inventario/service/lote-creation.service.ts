@@ -46,11 +46,20 @@ export class LoteCreationService {
       for (let i = 0; i < detalles.length; i++) {
         const detalle = detalles[i];
 
+        const fechaRef = fechaEmision
+          ? new Date(
+              fechaEmision.getUTCFullYear(),
+              fechaEmision.getUTCMonth(),
+              fechaEmision.getUTCDate(),
+              23,
+              59,
+              59,
+              999,
+            )
+          : undefined;
+
         if (tipoOperacion === 'COMPRA') {
-          const loteCreado = await this.registrarLoteCompra(
-            detalle,
-            fechaEmision,
-          );
+          const loteCreado = await this.registrarLoteCompra(detalle, fechaRef);
           // Para compras, el costo unitario es el precio de compra
           costosUnitariosDeDetalles.push(Number(detalle.precioUnitario));
 
@@ -67,7 +76,7 @@ export class LoteCreationService {
               detalle.inventario.id,
               Number(detalle.cantidad),
               metodoValoracion,
-              fechaEmision,
+              fechaRef,
             );
 
           costosUnitariosDeDetalles.push(costoUnitario);
@@ -78,7 +87,7 @@ export class LoteCreationService {
             await this.stockCalculationService.calcularConsumoFIFO(
               detalle.inventario.id,
               Number(detalle.cantidad),
-              fechaEmision,
+              fechaRef,
             );
 
           lotesUsados.push(

@@ -69,12 +69,11 @@ export class StockCalculationService {
     idLote: number,
     fechaHasta?: Date,
   ): Promise<LoteStockResult | null> {
-    // Intentar obtener del caché primero
     const cachedResult = this.stockCacheService.getLoteStock(
       idLote,
       fechaHasta,
     );
-    if (cachedResult) {
+    if (cachedResult && !fechaHasta) {
       return cachedResult;
     }
 

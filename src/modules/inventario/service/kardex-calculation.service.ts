@@ -4,7 +4,6 @@ import { Repository } from 'typeorm';
 import { InventarioLote } from '../entities/inventario-lote.entity';
 import { Inventario } from '../entities/inventario.entity';
 import { MovimientoDetalle } from '../../movimientos/entities/movimiento-detalle.entity';
-import { Movimiento } from '../../movimientos/entities/movimiento.entity';
 import { TipoMovimiento } from '../../movimientos/enum/tipo-movimiento.enum';
 import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
 import { StockCalculationService } from './stock-calculation.service';
@@ -85,8 +84,6 @@ export class KardexCalculationService {
     private readonly inventarioRepository: Repository<Inventario>,
     @InjectRepository(InventarioLote)
     private readonly loteRepository: Repository<InventarioLote>,
-    @InjectRepository(Movimiento)
-    private readonly movimientoRepository: Repository<Movimiento>,
     @InjectRepository(MovimientoDetalle)
     private readonly movimientoDetalleRepository: Repository<MovimientoDetalle>,
     private readonly stockCalculationService: StockCalculationService,
@@ -135,6 +132,7 @@ export class KardexCalculationService {
       saldoInicial,
       metodoValoracion,
       idInventario,
+      fechaDesde,
     );
 
     // Calcular valores finales
@@ -258,16 +256,14 @@ export class KardexCalculationService {
     },
     metodoValoracion: MetodoValoracion,
     idInventario: number,
+    fechaDesde: Date,
   ): Promise<KardexMovement[]> {
     const movimientosKardex: KardexMovement[] = [];
     let saldoActual = { ...saldoInicial };
 
     // Inicializar estado temporal de lotes para FIFO
     if (metodoValoracion === MetodoValoracion.FIFO) {
-      await this.inicializarLotesTemporales(
-        idInventario,
-        movimientos[0]?.fecha || new Date(),
-      );
+      await this.inicializarLotesTemporales(idInventario, fechaDesde);
     }
 
     for (let i = 0; i < movimientos.length; i++) {
@@ -283,13 +279,13 @@ export class KardexCalculationService {
       if (esEntrada) {
         movimientoKardex = await this.procesarEntrada(mov, saldoActual);
 
-        // Actualizar lotes temporales para FIFO en entradas
-        if (metodoValoracion === MetodoValoracion.FIFO && mov.idLote) {
+        // Actualizar lotes temporales para FIFO en entradas usando datos del movimiento calculado
+        if (metodoValoracion === MetodoValoracion.FIFO && mov.md_id_lote) {
           this.actualizarLoteTemporalEntrada(
-            mov.idLote,
-            mov.cantidad,
-            mov.costoUnitario,
-            mov.fecha,
+            Number(mov.md_id_lote),
+            Number(movimientoKardex.cantidad),
+            Number(movimientoKardex.costoUnitario),
+            new Date(movimientoKardex.fecha),
           );
         }
       } else {
@@ -539,10 +535,13 @@ export class KardexCalculationService {
     this.lotesDisponiblesTemporales.clear();
 
     // Obtener lotes disponibles al inicio del período
+    const fechaEstadoInicial = new Date(fechaInicio);
+    fechaEstadoInicial.setDate(fechaEstadoInicial.getDate() - 1);
+    fechaEstadoInicial.setHours(23, 59, 59, 999);
     const lotesDisponibles =
       await this.stockCalculationService.obtenerLotesDisponiblesFIFO(
         idInventario,
-        fechaInicio,
+        fechaEstadoInicial,
       );
 
     // Cargar en el estado temporal
