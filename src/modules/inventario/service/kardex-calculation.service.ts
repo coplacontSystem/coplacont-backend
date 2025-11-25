@@ -57,6 +57,11 @@ export interface KardexResult {
     id: number;
     nombre: string;
   };
+  saldoInicial: {
+    cantidad: number;
+    costoUnitario: number;
+    valorTotal: number;
+  };
   movimientos: KardexMovement[];
   stockFinal: number;
   costoUnitarioFinal: number;
@@ -150,6 +155,11 @@ export class KardexCalculationService {
       almacen: {
         id: inventario.almacen.id,
         nombre: inventario.almacen.nombre,
+      },
+      saldoInicial: {
+        cantidad: saldoInicial.cantidad,
+        costoUnitario: saldoInicial.costoUnitario,
+        valorTotal: saldoInicial.valorTotal,
       },
       movimientos: movimientosKardex,
       stockFinal,

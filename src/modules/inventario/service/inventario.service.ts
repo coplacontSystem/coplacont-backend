@@ -17,34 +17,34 @@ import { Inventario } from '../entities';
 import { StockCalculationService } from './stock-calculation.service';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ComprobanteDetalle } from '../../comprobantes/entities/comprobante-detalle';
-import { TablaDetalle } from '../../comprobantes/entities/tabla-detalle.entity';
 import { MovimientoDetalle } from '../../movimientos/entities/movimiento-detalle.entity';
 import { Movimiento } from '../../movimientos/entities/movimiento.entity';
 import { TipoMovimiento } from '../../movimientos/enum/tipo-movimiento.enum';
 import { EstadoMovimiento } from '../../movimientos/enum/estado-movimiento.enum';
 import { InventarioLoteService } from './inventario-lote.service';
+import { PeriodoContableService } from 'src/modules/periodos/service';
+import { StockCacheService } from './stock-cache.service';
+import { UpdateInventarioLoteDto } from '../dto/inventario-lote/update-inventario-lote.dto';
 
 @Injectable()
 export class InventarioService {
   constructor(
     private readonly inventarioRepository: InventarioRepository,
     private readonly stockCalculationService: StockCalculationService,
-    @InjectRepository(ComprobanteDetalle)
-    private readonly comprobanteDetalleRepository: Repository<ComprobanteDetalle>,
-    @InjectRepository(TablaDetalle)
-    private readonly tablaDetalleRepository: Repository<TablaDetalle>,
     @InjectRepository(MovimientoDetalle)
     private readonly movimientoDetalleRepository: Repository<MovimientoDetalle>,
     @InjectRepository(Movimiento)
     private readonly movimientoRepository: Repository<Movimiento>,
     private readonly inventarioLoteService: InventarioLoteService,
+    private readonly periodoContableService: PeriodoContableService,
+    private readonly stockCacheService: StockCacheService,
   ) {}
 
   private readonly logger = new Logger(InventarioService.name);
 
   async create(
     createInventarioDto: CreateInventarioDto,
+    personaId?: number,
   ): Promise<ResponseInventarioDto> {
     const { idAlmacen, idProducto, stockInicial, precioUnitario } =
       createInventarioDto;
@@ -69,16 +69,36 @@ export class InventarioService {
       stockInicial > 0 &&
       precioUnitario > 0
     ) {
+      let fechaIngresoStr = new Date().toISOString().split('T')[0];
+      let fechaMovimientoDate = new Date();
+      if (typeof personaId === 'number') {
+        try {
+          const periodoActivo =
+            await this.periodoContableService.obtenerPeriodoActivo(personaId);
+          console.log('ESTE ES EL PERIODO ACTIVO', periodoActivo);
+          const year = Number(
+            (periodoActivo as any)['año'] ??
+              new Date(periodoActivo.fechaInicio).getFullYear(),
+          );
+          fechaIngresoStr = `${String(year).padStart(4, '0')}-01-01`;
+          fechaMovimientoDate = new Date(year, 0, 1, 0, 0, 0, 0);
+        } catch (error) {
+          this.logger.warn(
+            `No se pudo obtener período activo para personaId=${personaId}; usando fecha actual,${error}`,
+          );
+        }
+      }
+
       const lote = await this.inventarioLoteService.create({
         idInventario: inventario.id,
-        fechaIngreso: new Date().toISOString().split('T')[0],
+        fechaIngreso: fechaIngresoStr,
         cantidadInicial: stockInicial,
         costoUnitario: precioUnitario,
       });
 
       const movimiento = this.movimientoRepository.create({
         tipo: TipoMovimiento.ENTRADA,
-        fecha: new Date(),
+        fecha: fechaMovimientoDate,
         numeroDocumento: 'INV-INIT',
         observaciones: 'Stock inicial de inventario',
         estado: EstadoMovimiento.PROCESADO,
@@ -205,6 +225,150 @@ export class InventarioService {
       }),
     );
     return inventariosWithStock;
+  }
+
+  /**
+   * Obtiene la información del inventario inicial (lote y movimiento) para un inventario
+   * Incluye cantidad y precio del lote inicial y el detalle de movimiento asociado (INV-INIT)
+   */
+  async getInventarioInicial(idInventario: number): Promise<{
+    lote: {
+      id: number;
+      fechaIngreso: Date;
+      cantidadInicial: number;
+      costoUnitario: number;
+    } | null;
+    movimiento: { id: number; fecha: Date; numeroDocumento: string } | null;
+    detalle: { id: number; cantidad: number } | null;
+  }> {
+    const detalle = await this.movimientoDetalleRepository
+      .createQueryBuilder('detalle')
+      .leftJoinAndSelect('detalle.movimiento', 'movimiento')
+      .where('detalle.idInventario = :idInventario', { idInventario })
+      .andWhere('movimiento.numeroDocumento = :doc', { doc: 'INV-INIT' })
+      .getOne();
+
+    if (!detalle) {
+      return { lote: null, movimiento: null, detalle: null };
+    }
+
+    const movimiento = detalle.movimiento;
+    let lote = null as {
+      id: number;
+      fechaIngreso: Date;
+      cantidadInicial: number;
+      costoUnitario: number;
+    } | null;
+    if (detalle.idLote) {
+      const l = await this.inventarioLoteService.findOne(detalle.idLote);
+      lote = {
+        id: l.id,
+        fechaIngreso: l.fechaIngreso,
+        cantidadInicial: Number(l.cantidadInicial),
+        costoUnitario: Number(l.costoUnitario),
+      };
+    }
+
+    return {
+      lote,
+      movimiento: movimiento
+        ? {
+            id: movimiento.id,
+            fecha: movimiento.fecha,
+            numeroDocumento: movimiento.numeroDocumento,
+          }
+        : null,
+      detalle: { id: detalle.id, cantidad: Number(detalle.cantidad) },
+    };
+  }
+
+  /**
+   * Actualiza el inventario inicial (cantidad y/o precio) sincronizando lote y detalle de movimiento
+   * Solo afecta el movimiento "INV-INIT" asociado al inventario
+   */
+  async updateInventarioInicial(
+    idInventario: number,
+    data: { cantidadInicial?: number; costoUnitario?: number },
+  ): Promise<{
+    lote: {
+      id: number;
+      fechaIngreso: Date;
+      cantidadInicial: number;
+      costoUnitario: number;
+    } | null;
+    movimiento: { id: number; fecha: Date; numeroDocumento: string } | null;
+    detalle: { id: number; cantidad: number } | null;
+  }> {
+    const detalle = await this.movimientoDetalleRepository
+      .createQueryBuilder('detalle')
+      .leftJoinAndSelect('detalle.movimiento', 'movimiento')
+      .where('detalle.idInventario = :idInventario', { idInventario })
+      .andWhere('movimiento.numeroDocumento = :doc', { doc: 'INV-INIT' })
+      .getOne();
+
+    if (!detalle) {
+      throw new NotFoundException(
+        'No se encontró movimiento de inventario inicial (INV-INIT) para este inventario',
+      );
+    }
+
+    let updatedLote = null as {
+      id: number;
+      fechaIngreso: Date;
+      cantidadInicial: number;
+      costoUnitario: number;
+    } | null;
+
+    if (detalle.idLote) {
+      const updateDto: UpdateInventarioLoteDto = {};
+      if (typeof data.cantidadInicial === 'number') {
+        updateDto.cantidadInicial = data.cantidadInicial;
+      }
+      if (typeof data.costoUnitario === 'number') {
+        updateDto.costoUnitario = data.costoUnitario;
+      }
+      if (Object.keys(updateDto).length > 0) {
+        const lote = await this.inventarioLoteService.update(
+          detalle.idLote,
+          updateDto,
+        );
+        updatedLote = {
+          id: lote.id,
+          fechaIngreso: lote.fechaIngreso,
+          cantidadInicial: Number(lote.cantidadInicial),
+          costoUnitario: Number(lote.costoUnitario),
+        };
+      } else {
+        const lote = await this.inventarioLoteService.findOne(detalle.idLote);
+        updatedLote = {
+          id: lote.id,
+          fechaIngreso: lote.fechaIngreso,
+          cantidadInicial: Number(lote.cantidadInicial),
+          costoUnitario: Number(lote.costoUnitario),
+        };
+      }
+    }
+
+    if (typeof data.cantidadInicial === 'number') {
+      detalle.cantidad = data.cantidadInicial;
+      await this.movimientoDetalleRepository.save(detalle);
+    }
+
+    // Invalidar caché de stock para reflejar el cambio
+    this.stockCacheService.invalidateInventario(idInventario);
+
+    const movimiento = detalle.movimiento;
+    return {
+      lote: updatedLote,
+      movimiento: movimiento
+        ? {
+            id: movimiento.id,
+            fecha: movimiento.fecha,
+            numeroDocumento: movimiento.numeroDocumento,
+          }
+        : null,
+      detalle: { id: detalle.id, cantidad: Number(detalle.cantidad) },
+    };
   }
 
   /**

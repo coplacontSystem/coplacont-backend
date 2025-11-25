@@ -172,26 +172,8 @@ export class KardexService {
       },
     );
 
-    // Calcular saldo inicial basado en el primer movimiento o valores por defecto
-    const primerMovimiento = kardexResult.movimientos[0];
-
-    // Calcular saldo inicial restando el primer movimiento del saldo después del primer movimiento
-    let saldoInicialCantidad = 0;
-    let saldoInicialValor = 0;
-
-    if (primerMovimiento) {
-      if (primerMovimiento.tipoMovimiento === TipoMovimiento.ENTRADA) {
-        saldoInicialCantidad =
-          primerMovimiento.cantidadSaldo - primerMovimiento.cantidad;
-        saldoInicialValor =
-          primerMovimiento.valorTotalSaldo - primerMovimiento.costoTotal;
-      } else {
-        saldoInicialCantidad =
-          primerMovimiento.cantidadSaldo + primerMovimiento.cantidad;
-        saldoInicialValor =
-          primerMovimiento.valorTotalSaldo + primerMovimiento.costoTotal;
-      }
-    }
+    const saldoInicialCantidad = kardexResult.saldoInicial?.cantidad ?? 0;
+    const saldoInicialValor = kardexResult.saldoInicial?.valorTotal ?? 0;
 
     const response: KardexResponseDto = {
       producto: kardexResult.producto.nombre,

@@ -144,9 +144,50 @@ export class StockCalculationService {
     const ajustes = parseFloat(String(ajustesRow?.total ?? 0)) || 0;
 
     const tieneMovimientos = entradas > 0 || salidas > 0 || ajustes > 0;
-    const cantidadActual = tieneMovimientos
-      ? entradas - salidas + ajustes
-      : Number(lote.cantidadInicial) || 0;
+    let cantidadActual: number;
+
+    if (tieneMovimientos) {
+      cantidadActual = entradas - salidas + ajustes;
+    } else {
+      if (!fechaHasta) {
+        cantidadActual = Number(lote.cantidadInicial) || 0;
+      } else {
+        const hastaYmd = new Date(
+          fechaHasta.getFullYear(),
+          fechaHasta.getMonth(),
+          fechaHasta.getDate(),
+        );
+
+        const invInit = await this.movimientoDetalleRepository
+          .createQueryBuilder('md')
+          .innerJoin('md.movimiento', 'm')
+          .select(['m.fecha as fecha', 'm.numeroDocumento as numero'])
+          .where('md.idLote = :idLote', { idLote })
+          .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
+          .andWhere('m.numeroDocumento = :doc', { doc: 'INV-INIT' })
+          .getRawOne<{ fecha: Date; numero: string }>();
+
+        if (invInit && invInit.fecha) {
+          const f = new Date(invInit.fecha);
+          const initYmd = new Date(f.getFullYear(), f.getMonth(), f.getDate());
+          cantidadActual =
+            initYmd.getTime() <= hastaYmd.getTime()
+              ? Number(lote.cantidadInicial) || 0
+              : 0;
+        } else {
+          const ingreso = new Date(lote.fechaIngreso);
+          const ingresoYmd = new Date(
+            ingreso.getFullYear(),
+            ingreso.getMonth(),
+            ingreso.getDate(),
+          );
+          cantidadActual =
+            ingresoYmd.getTime() <= hastaYmd.getTime()
+              ? Number(lote.cantidadInicial) || 0
+              : 0;
+        }
+      }
+    }
 
     const result = {
       idLote: lote.id,

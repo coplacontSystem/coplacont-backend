@@ -74,8 +74,15 @@ export class InventarioController {
   })
   async create(
     @Body() createInventarioDto: CreateInventarioDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioDto> {
-    const inventario = await this.inventarioService.create(createInventarioDto);
+    if (!user.personaId) {
+      throw new Error('Usuario no tiene una empresa asociada');
+    }
+    const inventario = await this.inventarioService.create(
+      createInventarioDto,
+      user.personaId,
+    );
     return plainToClass(ResponseInventarioDto, inventario);
   }
 
@@ -275,6 +282,65 @@ export class InventarioController {
       idProducto,
     );
     return plainToClass(ResponseInventarioDto, inventario);
+  }
+
+  /**
+   * Obtener información del inventario inicial (lote y movimiento INV-INIT) por inventario
+   */
+  @Get(':id/inicial')
+  @ApiOperation({
+    summary: 'Obtener inventario inicial',
+    description:
+      'Obtiene el lote inicial y el detalle de movimiento (INV-INIT) para un inventario dado',
+  })
+  @ApiParam({ name: 'id', description: 'ID del inventario', type: 'number' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Inventario inicial encontrado',
+  })
+  async getInventarioInicial(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<any> {
+    return await this.inventarioService.getInventarioInicial(id);
+  }
+
+  /**
+   * Editar el inventario inicial (cantidad y/o precio) por inventario
+   */
+  @Patch(':id/inicial')
+  @ApiOperation({
+    summary: 'Editar inventario inicial',
+    description:
+      'Actualiza la cantidad y/o precio del lote inicial y sincroniza el detalle de movimiento',
+  })
+  @ApiParam({ name: 'id', description: 'ID del inventario', type: 'number' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        cantidadInicial: {
+          type: 'number',
+          description: 'Nueva cantidad inicial del lote',
+          example: 100,
+        },
+        costoUnitario: {
+          type: 'number',
+          description: 'Nuevo costo unitario del lote',
+          example: 25.5,
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Inventario inicial actualizado',
+  })
+  async updateInventarioInicial(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: { cantidadInicial?: number; costoUnitario?: number },
+  ): Promise<any> {
+    return await this.inventarioService.updateInventarioInicial(id, body);
   }
 
   /**
