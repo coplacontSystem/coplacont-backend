@@ -1,5 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsPositive, IsOptional } from 'class-validator';
+import {
+  IsNumber,
+  IsPositive,
+  IsOptional,
+  IsDateString,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 /**
@@ -58,4 +63,23 @@ export class CreateInventarioDto {
   @IsPositive({ message: 'El precio unitario debe ser positivo' })
   @Type(() => Number)
   precioUnitario?: number;
+
+  /**
+   * Fecha del lote inicial (opcional)
+   * Si no se proporciona, se usa el primer día del periodo contable activo
+   */
+  @ApiProperty({
+    description:
+      'Fecha del lote inicial en formato YYYY-MM-DD (opcional). Si no se proporciona, se usa el primer día del periodo contable activo.',
+    example: '2026-01-15',
+    required: false,
+  })
+  @IsOptional()
+  @IsDateString(
+    {},
+    {
+      message: 'La fecha debe tener formato válido (YYYY-MM-DD)',
+    },
+  )
+  fechaInicial?: string;
 }

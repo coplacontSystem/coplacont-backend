@@ -38,7 +38,7 @@ export class InventarioService {
     private readonly inventarioLoteService: InventarioLoteService,
     private readonly periodoContableService: PeriodoContableService,
     private readonly stockCacheService: StockCacheService,
-  ) {}
+  ) { }
 
   private readonly logger = new Logger(InventarioService.name);
 
@@ -71,8 +71,13 @@ export class InventarioService {
     createInventarioDto: CreateInventarioDto,
     personaId?: number,
   ): Promise<ResponseInventarioDto> {
-    const { idAlmacen, idProducto, stockInicial, precioUnitario } =
-      createInventarioDto;
+    const {
+      idAlmacen,
+      idProducto,
+      stockInicial,
+      precioUnitario,
+      fechaInicial,
+    } = createInventarioDto;
 
     await this.validateAlmacenExists(idAlmacen);
     await this.validateProductoExists(idProducto);
@@ -94,24 +99,37 @@ export class InventarioService {
       stockInicial > 0 &&
       precioUnitario > 0
     ) {
-      let fechaIngresoStr = new Date().toISOString().split('T')[0];
-      let fechaMovimientoDate = new Date();
-      if (typeof personaId === 'number') {
-        try {
-          const periodoActivo =
-            await this.periodoContableService.obtenerPeriodoActivo(personaId);
-          console.log('ESTE ES EL PERIODO ACTIVO', periodoActivo);
-          const year = Number(
-            (periodoActivo as any)['año'] ??
-              new Date(periodoActivo.fechaInicio).getFullYear(),
-          );
-          fechaIngresoStr = `${String(year).padStart(4, '0')}-01-01`;
-          fechaMovimientoDate = new Date(year, 0, 1, 0, 0, 0, 0);
-        } catch (error) {
-          this.logger.warn(
-            `No se pudo obtener período activo para personaId=${personaId}; usando fecha actual,${error}`,
-          );
-        }
+      let fechaIngresoStr: string;
+      let fechaMovimientoDate: Date;
+
+      // Si se proporciona fechaInicial desde el frontend, usarla
+      if (fechaInicial) {
+        fechaIngresoStr = fechaInicial;
+        fechaMovimientoDate = new Date(fechaInicial + 'T00:00:00');
+      } else {
+        // Fallback: usar fecha actual por defecto
+        fechaIngresoStr = new Date().toISOString().split('T')[0];
+        fechaMovimientoDate = new Date();
+
+        // LÓGICA ANTERIOR: Obtener fecha del primer día del periodo contable activo
+        // Comentada a petición del cliente, ahora la fecha se envía desde el frontend
+        // if (typeof personaId === 'number') {
+        //   try {
+        //     const periodoActivo =
+        //       await this.periodoContableService.obtenerPeriodoActivo(personaId);
+        //     console.log('ESTE ES EL PERIODO ACTIVO', periodoActivo);
+        //     const year = Number(
+        //       (periodoActivo as any)['año'] ??
+        //         new Date(periodoActivo.fechaInicio).getFullYear(),
+        //     );
+        //     fechaIngresoStr = `${String(year).padStart(4, '0')}-01-01`;
+        //     fechaMovimientoDate = new Date(year, 0, 1, 0, 0, 0, 0);
+        //   } catch (error) {
+        //     this.logger.warn(
+        //       `No se pudo obtener período activo para personaId=${personaId}; usando fecha actual,${error}`,
+        //     );
+        //   }
+        // }
       }
 
       const lote = await this.inventarioLoteService.create({
@@ -307,10 +325,10 @@ export class InventarioService {
       lote,
       movimiento: movimiento
         ? {
-            id: movimiento.id,
-            fecha: movimiento.fecha,
-            numeroDocumento: movimiento.numeroDocumento,
-          }
+          id: movimiento.id,
+          fecha: movimiento.fecha,
+          numeroDocumento: movimiento.numeroDocumento,
+        }
         : null,
       detalle: { id: detalle.id, cantidad: Number(detalle.cantidad) },
     };
@@ -396,10 +414,10 @@ export class InventarioService {
       lote: updatedLote,
       movimiento: movimiento
         ? {
-            id: movimiento.id,
-            fecha: movimiento.fecha,
-            numeroDocumento: movimiento.numeroDocumento,
-          }
+          id: movimiento.id,
+          fecha: movimiento.fecha,
+          numeroDocumento: movimiento.numeroDocumento,
+        }
         : null,
       detalle: { id: detalle.id, cantidad: Number(detalle.cantidad) },
     };

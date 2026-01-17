@@ -33,21 +33,14 @@ import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
 import { CurrentUser } from '../../users/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../users/decorators/current-user.decorator';
 
-/**
- * Controlador para la gestión de inventario
- * Maneja las operaciones CRUD y consultas específicas de inventario
- */
 @ApiTags('Inventario')
 @Controller('api/inventario')
 @UseInterceptors(ClassSerializerInterceptor)
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class InventarioController {
-  constructor(private readonly inventarioService: InventarioService) {}
+  constructor(private readonly inventarioService: InventarioService) { }
 
-  /**
-   * Crear un nuevo registro de inventario
-   */
   @Post()
   @ApiOperation({
     summary: 'Crear inventario',
@@ -111,9 +104,6 @@ export class InventarioController {
     );
   }
 
-  /**
-   * Obtener un inventario por ID
-   */
   @Get(':id')
   @ApiOperation({
     summary: 'Obtener inventario por ID',
@@ -136,9 +126,6 @@ export class InventarioController {
     return plainToClass(ResponseInventarioDto, inventario);
   }
 
-  /**
-   * Obtener inventario por almacén
-   */
   @Get('almacen/:idAlmacen')
   @ApiOperation({
     summary: 'Obtener inventario por almacén',
@@ -175,9 +162,6 @@ export class InventarioController {
     );
   }
 
-  /**
-   * Obtener inventario por producto
-   */
   @Get('producto/:idProducto')
   @ApiOperation({
     summary: 'Obtener inventario por producto',
@@ -213,9 +197,6 @@ export class InventarioController {
     );
   }
 
-  /**
-   * Obtener inventarios de dos almacenes para productos comunes en ambos
-   */
   @Get('almacenes/comunes')
   @ApiOperation({
     summary: 'Inventarios comunes entre dos almacenes',
@@ -245,9 +226,6 @@ export class InventarioController {
     return result;
   }
 
-  /**
-   * Obtener inventario específico por almacén y producto
-   */
   @Get('almacen/:idAlmacen/producto/:idProducto')
   @ApiOperation({
     summary: 'Obtener inventario específico',
@@ -284,9 +262,6 @@ export class InventarioController {
     return plainToClass(ResponseInventarioDto, inventario);
   }
 
-  /**
-   * Obtener información del inventario inicial (lote y movimiento INV-INIT) por inventario
-   */
   @Get(':id/inicial')
   @ApiOperation({
     summary: 'Obtener inventario inicial',
@@ -304,9 +279,6 @@ export class InventarioController {
     return await this.inventarioService.getInventarioInicial(id);
   }
 
-  /**
-   * Editar el inventario inicial (cantidad y/o precio) por inventario
-   */
   @Patch(':id/inicial')
   @ApiOperation({
     summary: 'Editar inventario inicial',
@@ -343,9 +315,6 @@ export class InventarioController {
     return await this.inventarioService.updateInventarioInicial(id, body);
   }
 
-  /**
-   * Obtener productos con stock bajo
-   */
   @Get('reportes/stock-bajo')
   @ApiOperation({
     summary: 'Obtener productos con stock bajo',
@@ -372,9 +341,6 @@ export class InventarioController {
     );
   }
 
-  /**
-   * Obtener resumen de inventario por almacén
-   */
   @Get('reportes/resumen/:idAlmacen')
   @ApiOperation({
     summary: 'Obtener resumen de inventario',
@@ -399,9 +365,6 @@ export class InventarioController {
     return await this.inventarioService.getResumenByAlmacen(idAlmacen);
   }
 
-  /**
-   * Actualizar un inventario
-   */
   @Patch(':id')
   @ApiOperation({
     summary: 'Actualizar inventario',
@@ -437,9 +400,6 @@ export class InventarioController {
     return plainToClass(ResponseInventarioDto, inventario);
   }
 
-  /**
-   * Actualizar stock de un inventario
-   */
   @Patch(':id/stock')
   @ApiOperation({
     summary: 'Actualizar stock',
