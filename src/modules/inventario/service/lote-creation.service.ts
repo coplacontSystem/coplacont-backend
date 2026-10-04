@@ -28,9 +28,10 @@ export class LoteCreationService {
    */
   async procesarLotesComprobante(
     detalles: ComprobanteDetalle[],
-    tipoOperacion: string,
+    modo: 'ENTRADA' | 'SALIDA',
     metodoValoracion: MetodoValoracion = MetodoValoracion.PROMEDIO,
-    fechaEmision?: Date,
+    fechaEmision: Date,
+    factorCosto = 1,
   ): Promise<{
     costoUnitario: number[];
     lotes: { idLote: number; costoUnitarioDeLote: number; cantidad: number }[];
@@ -41,76 +42,79 @@ export class LoteCreationService {
       costoUnitarioDeLote: number;
       cantidad: number;
     }[] = [];
+    // Consumo acumulado por lote entre las líneas de este mismo comprobante
+    const consumidoPorLote = new Map<number, number>();
 
-    try {
-      for (let i = 0; i < detalles.length; i++) {
-        const detalle = detalles[i];
+    // Stock "a la fecha": todo lo registrado hasta el final del día de emisión
+    const fechaRef = new Date(
+      Date.UTC(
+        fechaEmision.getUTCFullYear(),
+        fechaEmision.getUTCMonth(),
+        fechaEmision.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
+    );
 
-        const fechaRef = fechaEmision
-          ? new Date(
-              fechaEmision.getUTCFullYear(),
-              fechaEmision.getUTCMonth(),
-              fechaEmision.getUTCDate(),
-              23,
-              59,
-              59,
-              999,
-            )
-          : undefined;
-
-        if (tipoOperacion === 'COMPRA') {
-          const loteCreado = await this.registrarLoteCompra(detalle, fechaRef);
-          // Para compras, el costo unitario es el precio de compra
-          costosUnitariosDeDetalles.push(Number(detalle.precioUnitario));
-
-          // Agregar el lote creado a la lista de lotes
-          lotesUsados.push({
-            idLote: loteCreado.id,
-            costoUnitarioDeLote: Number(detalle.precioUnitario),
-            cantidad: Number(detalle.cantidad),
-          });
-        } else {
-          // Para ventas, calcular costo usando el método de valoración
-          const costoUnitario =
-            await this.stockCalculationService.calcularCostoUnitarioVenta(
-              detalle.inventario.id,
-              Number(detalle.cantidad),
-              metodoValoracion,
-              fechaRef,
-            );
-
-          costosUnitariosDeDetalles.push(costoUnitario);
-
-          // Independientemente del método de valoración, registrar consumo físico por lotes usando FIFO
-          // Esto asegura que el stock físico se descuente de lotes reales aunque el costo sea PROMEDIO
-          const consumoFIFO =
-            await this.stockCalculationService.calcularConsumoFIFO(
-              detalle.inventario.id,
-              Number(detalle.cantidad),
-              fechaRef,
-            );
-
-          lotesUsados.push(
-            ...consumoFIFO.map((consumo) => ({
-              idLote: consumo.idLote,
-              costoUnitarioDeLote: consumo.costoUnitario,
-              cantidad: consumo.cantidad,
-            })),
-          );
-
-          // Invalidar caché después de la venta
-          this.stockCacheService.invalidateInventario(detalle.inventario.id);
-        }
+    for (const detalle of detalles) {
+      if (modo === 'ENTRADA') {
+        // El costo del lote se guarda siempre en soles (factorCosto = tipo de cambio)
+        const costo = Number(detalle.precioUnitario) * factorCosto;
+        const loteCreado = await this.registrarLoteCompra(
+          detalle,
+          fechaEmision,
+          costo,
+        );
+        costosUnitariosDeDetalles.push(costo);
+        lotesUsados.push({
+          idLote: loteCreado.id,
+          costoUnitarioDeLote: costo,
+          cantidad: Number(detalle.cantidad),
+        });
+        continue;
       }
 
-      return {
-        costoUnitario: costosUnitariosDeDetalles,
-        lotes: lotesUsados,
-      };
-    } catch (error) {
-      console.error('❌ Error procesando lotes:', error);
-      throw error;
+      // Salida: costo según el método de valoración
+      const costoUnitario =
+        await this.stockCalculationService.calcularCostoUnitarioVenta(
+          detalle.inventario.id,
+          Number(detalle.cantidad),
+          metodoValoracion,
+          fechaRef,
+          consumidoPorLote,
+        );
+      costosUnitariosDeDetalles.push(costoUnitario);
+
+      // El stock físico siempre se descuenta de lotes reales por FIFO,
+      // aunque el costo se calcule por promedio
+      const consumoFIFO =
+        await this.stockCalculationService.calcularConsumoFIFO(
+          detalle.inventario.id,
+          Number(detalle.cantidad),
+          fechaRef,
+          consumidoPorLote,
+        );
+      for (const consumo of consumoFIFO) {
+        consumidoPorLote.set(
+          consumo.idLote,
+          (consumidoPorLote.get(consumo.idLote) ?? 0) + consumo.cantidad,
+        );
+        lotesUsados.push({
+          idLote: consumo.idLote,
+          costoUnitarioDeLote: consumo.costoUnitario,
+          cantidad: consumo.cantidad,
+        });
+      }
+
+      this.stockCacheService.invalidateInventario(detalle.inventario.id);
     }
+
+    return {
+      costoUnitario: costosUnitariosDeDetalles,
+      lotes: lotesUsados,
+    };
   }
 
   /**
@@ -118,7 +122,8 @@ export class LoteCreationService {
    */
   private async registrarLoteCompra(
     detalle: ComprobanteDetalle,
-    fechaEmision?: Date,
+    fechaEmision: Date,
+    costoUnitario: number,
   ): Promise<InventarioLote> {
     // Validar que el detalle tenga inventario
     if (!detalle.inventario || !detalle.inventario.id) {
@@ -148,7 +153,7 @@ export class LoteCreationService {
 
     // Validar cantidad y precio
     const cantidad = Number(detalle.cantidad);
-    const precioUnitario = Number(detalle.precioUnitario);
+    const precioUnitario = costoUnitario;
 
     if (cantidad <= 0) {
       throw new Error('La cantidad debe ser mayor a 0');
@@ -163,7 +168,7 @@ export class LoteCreationService {
       numeroLote: `LOTE-${Date.now()}-${inventario.id}-${inventario.producto.id}`,
       cantidadInicial: 0,
       costoUnitario: precioUnitario,
-      fechaIngreso: fechaEmision || new Date(),
+      fechaIngreso: fechaEmision,
       observaciones: `Lote creado automáticamente desde compra - ${detalle.descripcion || 'Sin descripción'}`,
     });
 

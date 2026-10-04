@@ -402,11 +402,18 @@ export class StockCalculationService {
     idInventario: number,
     cantidadAConsumir: number,
     fechaHasta?: Date,
+    yaConsumido?: Map<number, number>,
   ): Promise<{ idLote: number; cantidad: number; costoUnitario: number }[]> {
-    const lotesDisponibles = await this.obtenerLotesDisponiblesFIFO(
-      idInventario,
-      fechaHasta,
-    );
+    // Descuenta lo que ya consumieron otras líneas del mismo comprobante
+    const lotesDisponibles = (
+      await this.obtenerLotesDisponiblesFIFO(idInventario, fechaHasta)
+    )
+      .map((l) => ({
+        ...l,
+        cantidadDisponible:
+          l.cantidadDisponible - (yaConsumido?.get(l.idLote) ?? 0),
+      }))
+      .filter((l) => l.cantidadDisponible > 1e-9);
 
     const consumo: {
       idLote: number;
@@ -454,6 +461,7 @@ export class StockCalculationService {
     cantidadVenta: number,
     metodoValoracion: MetodoValoracion,
     fechaHasta?: Date,
+    yaConsumido?: Map<number, number>,
   ): Promise<number> {
     if (metodoValoracion === MetodoValoracion.PROMEDIO) {
       return await this.calcularCostoPromedio(idInventario, fechaHasta);
@@ -463,6 +471,7 @@ export class StockCalculationService {
         idInventario,
         cantidadVenta,
         fechaHasta,
+        yaConsumido,
       );
 
       let costoTotal = 0;

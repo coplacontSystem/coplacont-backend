@@ -42,116 +42,89 @@ export class CostoVentaRepository {
   ) {}
 
   /**
-   * Obtiene los datos mensuales de compras para un año específico
+   * Movimientos de inventario de la empresa valorizados al costo (en soles):
+   * entradas = cantidad × costo del lote; salidas = Σ cantidad × costo de los
+   * lotes consumidos. Incluye lotes de inventario inicial sin movimientos.
+   * Devuelve un CTE `mov(id_inventario, fecha, tipo, valor)` y sus parámetros.
+   */
+  private movimientosValorizados(filtros: {
+    personaId: number;
+    idAlmacen?: number;
+    idProducto?: number;
+  }): { cte: string; params: unknown[] } {
+    const params: unknown[] = [filtros.personaId];
+    let filtro = 'a.id_persona = $1';
+    if (filtros.idAlmacen) {
+      params.push(filtros.idAlmacen);
+      filtro += ` AND a.id = $${params.length}`;
+    }
+    if (filtros.idProducto) {
+      params.push(filtros.idProducto);
+      filtro += ` AND i.id_producto = $${params.length}`;
+    }
+    const cte = `
+      WITH mov AS (
+        SELECT md.id_inventario, m.fecha, m.tipo::text AS tipo,
+               CASE
+                 WHEN m.tipo = 'ENTRADA' THEN md.cantidad * COALESCE(l."costoUnitario", 0)
+                 WHEN m.tipo = 'SALIDA' THEN COALESCE((
+                   SELECT SUM(ds.cantidad * ds.costo_unitario_de_lote)
+                     FROM detalle_salidas ds
+                    WHERE ds.id_movimiento_detalle = md.id), 0)
+                 ELSE 0
+               END AS valor
+          FROM movimiento_detalles md
+          JOIN movimientos m ON m.id = md.id_movimiento AND m.estado = 'PROCESADO'
+          JOIN inventario i ON i.id = md.id_inventario
+          JOIN almacen a ON a.id = i.id_almacen
+          LEFT JOIN inventario_lote l ON l.id = md.id_lote
+         WHERE ${filtro}
+        UNION ALL
+        SELECT l.id_inventario, l."fechaIngreso"::timestamp, 'ENTRADA',
+               l."cantidadInicial" * l."costoUnitario"
+          FROM inventario_lote l
+          JOIN inventario i ON i.id = l.id_inventario
+          JOIN almacen a ON a.id = i.id_almacen
+         WHERE ${filtro} AND l."cantidadInicial" > 0
+           AND NOT EXISTS (SELECT 1 FROM movimiento_detalles x WHERE x.id_lote = l.id)
+      )`;
+    return { cte, params };
+  }
+
+  /**
+   * Compras (entradas) del año por mes, al costo
    */
   async getComprasMensuales(
     filtros: CostoVentaFiltros,
   ): Promise<{ mes: number; total: number }[]> {
-    let sql = `
-      SELECT 
-        EXTRACT(MONTH FROM c."fechaEmision") as mes,
-        COALESCE(SUM(
-          CASE 
-            WHEN COALESCE(m.tipo, 'ENTRADA') = 'ENTRADA' 
-            THEN cd.cantidad * cd."precioUnitario"
-            ELSE 0
-          END
-        ), 0) as total
-      FROM comprobante c
-      INNER JOIN comprobante_detalle cd ON c."idComprobante" = cd.id_comprobante
-      INNER JOIN inventario i ON cd.id_inventario = i.id
-      INNER JOIN producto p ON i.id_producto = p.id
-      INNER JOIN almacen a ON i.id_almacen = a.id
-      LEFT JOIN movimientos m ON m.id_comprobante = c."idComprobante"
-      LEFT JOIN movimiento_detalles md ON m.id = md.id_movimiento AND md.id_inventario = i.id
-      WHERE EXTRACT(YEAR FROM c."fechaEmision") = $1
-    `;
-
-    const params: any[] = [filtros.año];
-    let paramIndex = 2;
-
-    sql += ` AND a.id_persona = $${paramIndex}`;
-    params.push(filtros.personaId);
-    paramIndex++;
-
-    if (filtros.idAlmacen) {
-      sql += ` AND a.id = $${paramIndex}`;
-      params.push(filtros.idAlmacen);
-      paramIndex++;
-    }
-
-    if (filtros.idProducto) {
-      sql += ` AND p.id = $${paramIndex}`;
-      params.push(filtros.idProducto);
-      paramIndex++;
-    }
-
-    sql += `
-      GROUP BY EXTRACT(MONTH FROM c."fechaEmision")
-      ORDER BY mes
-    `;
-
-    const result: Array<{ mes: string | number; total: string | number }> =
-      await this.dataSource.query(sql, params);
-    return result.map((row) => ({
-      mes: parseInt(String(row.mes)),
-      total: parseFloat(String(row.total)) || 0,
-    }));
+    return this.totalesMensuales(filtros, 'ENTRADA');
   }
 
   /**
-   * Obtiene los datos mensuales de salidas para un año específico
+   * Salidas del año por mes, al costo de los lotes consumidos
    */
   async getSalidasMensuales(
     filtros: CostoVentaFiltros,
   ): Promise<{ mes: number; total: number }[]> {
-    let sql = `
-      SELECT 
-        EXTRACT(MONTH FROM c."fechaEmision") as mes,
-        COALESCE(SUM(
-          CASE 
-            WHEN COALESCE(m.tipo, 'ENTRADA') = 'SALIDA' 
-            THEN cd.cantidad * cd."precioUnitario"
-            ELSE 0
-          END
-        ), 0) as total
-      FROM comprobante c
-      INNER JOIN comprobante_detalle cd ON c."idComprobante" = cd.id_comprobante
-      INNER JOIN inventario i ON cd.id_inventario = i.id
-      INNER JOIN producto p ON i.id_producto = p.id
-      INNER JOIN almacen a ON i.id_almacen = a.id
-      LEFT JOIN movimientos m ON m.id_comprobante = c."idComprobante"
-      LEFT JOIN movimiento_detalles md ON m.id = md.id_movimiento AND md.id_inventario = i.id
-      WHERE EXTRACT(YEAR FROM c."fechaEmision") = $1
-        AND COALESCE(m.tipo, 'ENTRADA') = 'SALIDA'
-    `;
+    return this.totalesMensuales(filtros, 'SALIDA');
+  }
 
-    const params: any[] = [filtros.año];
-    let paramIndex = 2;
-
-    sql += ` AND a.id_persona = $${paramIndex}`;
-    params.push(filtros.personaId);
-    paramIndex++;
-
-    if (filtros.idAlmacen) {
-      sql += ` AND a.id = $${paramIndex}`;
-      params.push(filtros.idAlmacen);
-      paramIndex++;
-    }
-
-    if (filtros.idProducto) {
-      sql += ` AND p.id = $${paramIndex}`;
-      params.push(filtros.idProducto);
-      paramIndex++;
-    }
-
-    sql += `
-      GROUP BY EXTRACT(MONTH FROM c."fechaEmision")
-      ORDER BY mes
-    `;
-
+  private async totalesMensuales(
+    filtros: CostoVentaFiltros,
+    tipo: 'ENTRADA' | 'SALIDA',
+  ): Promise<{ mes: number; total: number }[]> {
+    const { cte, params } = this.movimientosValorizados(filtros);
     const result: Array<{ mes: string | number; total: string | number }> =
-      await this.dataSource.query(sql, params);
+      await this.dataSource.query(
+        `${cte}
+         SELECT EXTRACT(MONTH FROM fecha) AS mes, COALESCE(SUM(valor), 0) AS total
+           FROM mov
+          WHERE tipo = $${params.length + 1}
+            AND EXTRACT(YEAR FROM fecha) = $${params.length + 2}
+          GROUP BY 1
+          ORDER BY 1`,
+        [...params, tipo, filtros.año],
+      );
     return result.map((row) => ({
       mes: parseInt(String(row.mes)),
       total: parseFloat(String(row.total)) || 0,
@@ -159,55 +132,23 @@ export class CostoVentaRepository {
   }
 
   /**
-   * Calcula el inventario final para un mes específico
+   * Valor del inventario al cierre del mes (entradas − salidas acumuladas, al costo)
    */
   async getInventarioFinalMensual(
     filtros: CostoVentaFiltros,
     mes: number,
   ): Promise<number> {
-    // Fecha de corte: último día del mes
+    // Último instante del mes
     const fechaCorte = new Date(filtros.año, mes, 0, 23, 59, 59, 999);
-
-    let sql = `
-      SELECT 
-        COALESCE(SUM(
-          CASE 
-            WHEN COALESCE(m.tipo, 'ENTRADA') = 'ENTRADA' 
-            THEN cd.cantidad * cd."precioUnitario"
-            ELSE -cd.cantidad * cd."precioUnitario"
-          END
-        ), 0) as total
-      FROM comprobante c
-      INNER JOIN comprobante_detalle cd ON c."idComprobante" = cd.id_comprobante
-      INNER JOIN inventario i ON cd.id_inventario = i.id
-      INNER JOIN producto p ON i.id_producto = p.id
-      INNER JOIN almacen a ON i.id_almacen = a.id
-      LEFT JOIN movimientos m ON m.id_comprobante = c."idComprobante"
-      LEFT JOIN movimiento_detalles md ON m.id = md.id_movimiento AND md.id_inventario = i.id
-      WHERE c."fechaEmision" <= $1
-    `;
-
-    const params: any[] = [fechaCorte];
-    let paramIndex = 2;
-
-    sql += ` AND a.id_persona = $${paramIndex}`;
-    params.push(filtros.personaId);
-    paramIndex++;
-
-    if (filtros.idAlmacen) {
-      sql += ` AND a.id = $${paramIndex}`;
-      params.push(filtros.idAlmacen);
-      paramIndex++;
-    }
-
-    if (filtros.idProducto) {
-      sql += ` AND p.id = $${paramIndex}`;
-      params.push(filtros.idProducto);
-      paramIndex++;
-    }
-
+    const { cte, params } = this.movimientosValorizados(filtros);
     const result: Array<{ total: string | number }> =
-      await this.dataSource.query(sql, params);
+      await this.dataSource.query(
+        `${cte}
+       SELECT COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN -valor ELSE valor END), 0) AS total
+         FROM mov
+        WHERE fecha <= $${params.length + 1}`,
+        [...params, fechaCorte],
+      );
     return parseFloat(String(result[0]?.total)) || 0;
   }
 
@@ -273,111 +214,40 @@ export class CostoVentaRepository {
   }
 
   /**
-   * Obtiene los datos de entradas por inventario para un año específico
+   * Entradas del año por inventario, al costo
    */
   async getEntradasPorInventario(
     filtros: CostoVentaPorInventarioFiltros,
   ): Promise<{ idInventario: number; total: number }[]> {
-    let sql = `
-      SELECT 
-        i.id as "idInventario",
-        COALESCE(SUM(
-          CASE 
-            WHEN COALESCE(m.tipo, 'ENTRADA') = 'ENTRADA' 
-            THEN cd.cantidad * cd."precioUnitario"
-            ELSE 0
-          END
-        ), 0) as total
-      FROM inventario i
-      INNER JOIN producto p ON i.id_producto = p.id
-      INNER JOIN almacen a ON i.id_almacen = a.id
-      LEFT JOIN comprobante_detalle cd ON cd.id_inventario = i.id
-      LEFT JOIN comprobante c ON c."idComprobante" = cd.id_comprobante
-      LEFT JOIN movimientos m ON m.id_comprobante = c."idComprobante"
-      WHERE (c."fechaEmision" IS NULL OR EXTRACT(YEAR FROM c."fechaEmision") = $1)
-    `;
-
-    const params: any[] = [filtros.año];
-    let paramIndex = 2;
-
-    sql += ` AND a.id_persona = $${paramIndex}`;
-    params.push(filtros.personaId);
-    paramIndex++;
-
-    if (filtros.idAlmacen) {
-      sql += ` AND i.id_almacen = $${paramIndex}`;
-      params.push(filtros.idAlmacen);
-      paramIndex++;
-    }
-
-    if (filtros.idProducto) {
-      sql += ` AND i.id_producto = $${paramIndex}`;
-      params.push(filtros.idProducto);
-      paramIndex++;
-    }
-
-    sql += ` GROUP BY i.id ORDER BY i.id`;
-
-    const result: Array<{
-      idInventario: string | number;
-      total: string | number;
-    }> = await this.dataSource.query(sql, params);
-    return result.map((row) => ({
-      idInventario: parseInt(String(row.idInventario)),
-      total: parseFloat(String(row.total)) || 0,
-    }));
+    return this.totalesPorInventario(filtros, 'ENTRADA');
   }
 
   /**
-   * Obtiene los datos de salidas por inventario para un año específico
+   * Salidas del año por inventario, al costo de los lotes consumidos
    */
   async getSalidasPorInventario(
     filtros: CostoVentaPorInventarioFiltros,
   ): Promise<{ idInventario: number; total: number }[]> {
-    let sql = `
-      SELECT 
-        i.id as "idInventario",
-        COALESCE(SUM(
-          CASE 
-            WHEN COALESCE(m.tipo, 'ENTRADA') = 'SALIDA' 
-            THEN cd.cantidad * cd."precioUnitario"
-            ELSE 0
-          END
-        ), 0) as total
-      FROM inventario i
-      INNER JOIN producto p ON i.id_producto = p.id
-      INNER JOIN almacen a ON i.id_almacen = a.id
-      LEFT JOIN comprobante_detalle cd ON cd.id_inventario = i.id
-      LEFT JOIN comprobante c ON c."idComprobante" = cd.id_comprobante
-      LEFT JOIN movimientos m ON m.id_comprobante = c."idComprobante"
-      WHERE (c."fechaEmision" IS NULL OR EXTRACT(YEAR FROM c."fechaEmision") = $1)
-    `;
+    return this.totalesPorInventario(filtros, 'SALIDA');
+  }
 
-    const params: any[] = [filtros.año];
-    let paramIndex = 2;
-
-    sql += ` AND a.id_persona = $${paramIndex}`;
-    params.push(filtros.personaId);
-    paramIndex++;
-
-    if (filtros.idAlmacen) {
-      sql += ` AND i.id_almacen = $${paramIndex}`;
-      params.push(filtros.idAlmacen);
-      paramIndex++;
-    }
-
-    if (filtros.idProducto) {
-      sql += ` AND i.id_producto = $${paramIndex}`;
-      params.push(filtros.idProducto);
-      paramIndex++;
-    }
-
-    sql += ` GROUP BY i.id ORDER BY i.id`;
-
+  private async totalesPorInventario(
+    filtros: CostoVentaPorInventarioFiltros,
+    tipo: 'ENTRADA' | 'SALIDA',
+  ): Promise<{ idInventario: number; total: number }[]> {
+    const { cte, params } = this.movimientosValorizados(filtros);
     const result: Array<{
       idInventario: string | number;
       total: string | number;
-    }> = await this.dataSource.query(sql, params);
+    }> = await this.dataSource.query(
+      `${cte}
+       SELECT id_inventario AS "idInventario", COALESCE(SUM(valor), 0) AS total
+         FROM mov
+        WHERE tipo = $${params.length + 1}
+          AND EXTRACT(YEAR FROM fecha) = $${params.length + 2}
+        GROUP BY 1`,
+      [...params, tipo, filtros.año],
+    );
     return result.map((row) => ({
       idInventario: parseInt(String(row.idInventario)),
       total: parseFloat(String(row.total)) || 0,
@@ -385,58 +255,25 @@ export class CostoVentaRepository {
   }
 
   /**
-   * Obtiene el inventario final por inventario para un año específico
+   * Valor del inventario al cierre del año por inventario (al costo)
    */
   async getInventarioFinalPorInventario(
     filtros: CostoVentaPorInventarioFiltros,
   ): Promise<{ idInventario: number; total: number }[]> {
-    let sql = `
-      SELECT 
-        i.id as "idInventario",
-        COALESCE(SUM(
-          CASE 
-            WHEN COALESCE(m.tipo, 'ENTRADA') = 'ENTRADA' 
-            THEN cd.cantidad * cd."precioUnitario"
-            WHEN m.tipo = 'SALIDA' 
-            THEN -(cd.cantidad * cd."precioUnitario")
-            ELSE 0
-          END
-        ), 0) as total
-      FROM inventario i
-      INNER JOIN producto p ON i.id_producto = p.id
-      INNER JOIN almacen a ON i.id_almacen = a.id
-      LEFT JOIN comprobante_detalle cd ON cd.id_inventario = i.id
-      LEFT JOIN comprobante c ON c."idComprobante" = cd.id_comprobante
-      LEFT JOIN movimientos m ON m.id_comprobante = c."idComprobante"
-      LEFT JOIN movimiento_detalles md ON m.id = md.id_movimiento AND md.id_inventario = i.id
-      WHERE (c."fechaEmision" IS NULL OR EXTRACT(YEAR FROM c."fechaEmision") <= $1)
-    `;
-
-    const params: any[] = [filtros.año];
-    let paramIndex = 2;
-
-    sql += ` AND a.id_persona = $${paramIndex}`;
-    params.push(filtros.personaId);
-    paramIndex++;
-
-    if (filtros.idAlmacen) {
-      sql += ` AND i.id_almacen = $${paramIndex}`;
-      params.push(filtros.idAlmacen);
-      paramIndex++;
-    }
-
-    if (filtros.idProducto) {
-      sql += ` AND i.id_producto = $${paramIndex}`;
-      params.push(filtros.idProducto);
-      paramIndex++;
-    }
-
-    sql += ` GROUP BY i.id ORDER BY i.id`;
-
+    const fechaCorte = new Date(filtros.año, 11, 31, 23, 59, 59, 999);
+    const { cte, params } = this.movimientosValorizados(filtros);
     const result: Array<{
       idInventario: string | number;
       total: string | number;
-    }> = await this.dataSource.query(sql, params);
+    }> = await this.dataSource.query(
+      `${cte}
+         SELECT id_inventario AS "idInventario",
+                COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN -valor ELSE valor END), 0) AS total
+           FROM mov
+          WHERE fecha <= $${params.length + 1}
+          GROUP BY 1`,
+      [...params, fechaCorte],
+    );
     return result.map((row) => ({
       idInventario: parseInt(String(row.idInventario)),
       total: parseFloat(String(row.total)) || 0,

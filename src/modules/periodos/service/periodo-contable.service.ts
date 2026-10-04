@@ -1,3 +1,4 @@
+import { fechaLocal } from '../../comprobantes/service/reglas-registro';
 import {
   Injectable,
   NotFoundException,
@@ -58,8 +59,8 @@ export class PeriodoContableService {
     let fechaFin: Date;
 
     if (createDto.fechaInicio && createDto.fechaFin) {
-      fechaInicio = new Date(createDto.fechaInicio);
-      fechaFin = new Date(createDto.fechaFin);
+      fechaInicio = fechaLocal(createDto.fechaInicio);
+      fechaFin = fechaLocal(createDto.fechaFin);
     } else {
       fechaInicio = configuracion.calcularFechaInicioPeriodo(createDto.año);
       fechaFin = configuracion.calcularFechaFinPeriodo(fechaInicio);
@@ -111,8 +112,6 @@ export class PeriodoContableService {
   async obtenerPeriodoActivo(
     idPersona: number,
   ): Promise<ResponsePeriodoContableDto> {
-    console.log('idPersona', idPersona);
-
     const periodo = await this.periodoRepository.findOne({
       where: {
         persona: { id: idPersona },
@@ -120,7 +119,6 @@ export class PeriodoContableService {
       },
       relations: ['persona'],
     });
-    console.log('periodo', periodo);
 
     if (!periodo) {
       throw new NotFoundException(
@@ -187,8 +185,8 @@ export class PeriodoContableService {
 
     // Validar fechas si se proporcionan
     if (updateDto.fechaInicio && updateDto.fechaFin) {
-      const fechaInicio = new Date(updateDto.fechaInicio);
-      const fechaFin = new Date(updateDto.fechaFin);
+      const fechaInicio = fechaLocal(updateDto.fechaInicio);
+      const fechaFin = fechaLocal(updateDto.fechaFin);
 
       if (fechaInicio >= fechaFin) {
         throw new BadRequestException(
@@ -206,10 +204,10 @@ export class PeriodoContableService {
     Object.assign(periodo, updateDto);
 
     if (updateDto.fechaInicio) {
-      periodo.fechaInicio = new Date(updateDto.fechaInicio);
+      periodo.fechaInicio = fechaLocal(updateDto.fechaInicio);
     }
     if (updateDto.fechaFin) {
-      periodo.fechaFin = new Date(updateDto.fechaFin);
+      periodo.fechaFin = fechaLocal(updateDto.fechaFin);
     }
 
     const periodoActualizado = await this.periodoRepository.save(periodo);
@@ -245,8 +243,8 @@ export class PeriodoContableService {
 
     // Validar fechas si se proporcionan
     if (updateDto.fechaInicio && updateDto.fechaFin) {
-      const fechaInicio = new Date(updateDto.fechaInicio);
-      const fechaFin = new Date(updateDto.fechaFin);
+      const fechaInicio = fechaLocal(updateDto.fechaInicio);
+      const fechaFin = fechaLocal(updateDto.fechaFin);
 
       if (fechaInicio >= fechaFin) {
         throw new BadRequestException(
@@ -264,10 +262,10 @@ export class PeriodoContableService {
     Object.assign(periodo, updateDto);
 
     if (updateDto.fechaInicio) {
-      periodo.fechaInicio = new Date(updateDto.fechaInicio);
+      periodo.fechaInicio = fechaLocal(updateDto.fechaInicio);
     }
     if (updateDto.fechaFin) {
-      periodo.fechaFin = new Date(updateDto.fechaFin);
+      periodo.fechaFin = fechaLocal(updateDto.fechaFin);
     }
 
     const periodoActualizado = await this.periodoRepository.save(periodo);
@@ -474,10 +472,8 @@ export class PeriodoContableService {
       }
 
       const periodoActivo = await this.obtenerPeriodoActivo(idPersona);
-      console.log('periodoActivo', periodoActivo);
 
       const periodo = await this.obtenerPorId(periodoActivo.id);
-      console.log('periodo', periodo);
 
       // Verificar si el período está cerrado
       if (periodo.cerrado) {
@@ -487,10 +483,6 @@ export class PeriodoContableService {
           periodo,
         };
       }
-      console.log(
-        'periodo.estaEnPeriodo(fechaDate)',
-        periodo.estaEnPeriodo(fechaDate),
-      );
       if (periodo.estaEnPeriodo(fechaDate)) {
         return { valida: true, periodo };
       }

@@ -1,22 +1,24 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import {
-  Repository,
-  DataSource,
-  Not,
-  In,
-  EntityManager,
-  QueryFailedError,
-} from 'typeorm';
+import { Repository, DataSource, Not, In, EntityManager } from 'typeorm';
 import { Comprobante } from '../entities/comprobante';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateComprobanteDto } from '../dto/comprobante/create-comprobante.dto';
 import { EntidadService } from 'src/modules/entidades/services';
 import { ComprobanteDetalleService } from './comprobante-detalle.service';
-import {
-  BadRequestException,
-  InternalServerErrorException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ComprobanteTotalesService } from './comprobante-totales.service';
+import { runInTransaction } from 'typeorm-transactional';
+import { Moneda } from '../enum/tipo-moneda.enum';
+import { TipoMovimiento } from 'src/modules/movimientos/enum/tipo-movimiento.enum';
+import {
+  bloquearInventarios,
+  fechaContable,
+  modoInventario,
+  validarImportes,
+  validarStockEnElTiempo,
+  ymd,
+  ymdContable,
+} from './reglas-registro';
 import { ResponseComprobanteDto } from '../dto/comprobante/response-comprobante.dto';
 import { plainToInstance } from 'class-transformer';
 import { TablaDetalle } from '../entities/tabla-detalle.entity';
@@ -27,6 +29,7 @@ import { LoteCreationService } from 'src/modules/inventario/service/lote-creatio
 import { PeriodoContableService } from 'src/modules/periodos/service';
 import { PersonaService } from 'src/modules/users/services/person.service';
 import { PertenenciaService } from 'src/common/pertenencia.service';
+import { CatalogoService, OPERACION } from 'src/common/catalogo.service';
 
 @Injectable()
 export class ComprobanteService implements OnModuleInit {
@@ -47,6 +50,7 @@ export class ComprobanteService implements OnModuleInit {
     private readonly periodoContableService: PeriodoContableService,
     private readonly dataSource: DataSource,
     private readonly pertenencia: PertenenciaService,
+    private readonly catalogo: CatalogoService,
   ) {}
 
   /**
@@ -77,6 +81,13 @@ export class ComprobanteService implements OnModuleInit {
     const queryBuilder = repository.createQueryBuilder('c');
 
     if (manager) {
+      // Crea la fila si no existe sin chocar con otro registro concurrente,
+      // y luego la bloquea hasta el fin de la transacción
+      await manager.query(
+        `INSERT INTO correlativos (tipo, "personaId", "ultimoNumero")
+         VALUES ($1, $2, 0) ON CONFLICT DO NOTHING`,
+        [idTipoOperacion.toString(), personaId],
+      );
       queryBuilder.setLock('pessimistic_write');
     }
 
@@ -99,303 +110,243 @@ export class ComprobanteService implements OnModuleInit {
   }
 
   /**
-   * Registra un nuevo comprobante con sus detalles y movimientos asociados
-   * @param createComprobanteDto - Datos del comprobante a crear
-   * @param personaId - ID de la persona/empresa propietaria
+   * Registra un comprobante con sus detalles, totales, lotes y movimiento de kardex.
+   * Todo ocurre en una sola transacción: si algo falla no queda nada a medias.
+   * Sin detalles (operaciones que no mueven inventario) se usa el campo `total`.
    */
   async register(
-    createComprobanteDto: CreateComprobanteDto,
+    dto: CreateComprobanteDto,
     personaId: number,
   ): Promise<ResponseComprobanteDto> {
-    /**
-     * Registra un comprobante. Si existen detalles, calcula y guarda totales a partir de ellos.
-     * Si no existen detalles (operaciones distintas a venta/compra), registra los totales
-     * usando el campo `total` proporcionado en el payload.
-     */
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      // Todo lo referenciado debe pertenecer a la empresa del usuario
-      await this.pertenencia.entidades(
-        [createComprobanteDto.idPersona],
-        personaId,
-      );
-      await this.pertenencia.inventarios(
-        (createComprobanteDto.detalles ?? []).map((d) => d.idInventario),
-        personaId,
-      );
-      if (createComprobanteDto.idComprobanteAfecto) {
-        await this.pertenencia.comprobantes(
-          [createComprobanteDto.idComprobanteAfecto],
-          personaId,
-        );
-      }
-
-      //Verificar que comprobante este dentro del PERIODO
-      const periodoActivoDto =
-        await this.periodoContableService.obtenerPeriodoActivo(personaId);
-      const periodoActicoDePersona =
-        await this.periodoContableService.obtenerPorId(periodoActivoDto.id);
-
-      const fechaEmisionParsed = new Date(createComprobanteDto.fechaEmision);
-      const ahora = new Date();
-      const fechaEmisionFinal = new Date(
-        fechaEmisionParsed.getUTCFullYear(),
-        fechaEmisionParsed.getUTCMonth(),
-        fechaEmisionParsed.getUTCDate(),
-        ahora.getHours(),
-        ahora.getMinutes(),
-        ahora.getSeconds(),
-        ahora.getMilliseconds(),
-      );
-
-      if (
-        fechaEmisionFinal < new Date(periodoActicoDePersona.fechaInicio) ||
-        fechaEmisionFinal > new Date(periodoActicoDePersona.fechaFin)
-      ) {
-        throw new BadRequestException({
-          message:
-            'La fecha de emisión del comprobante está fuera del período contable vigente',
-          fechaEmision: fechaEmisionFinal.toISOString(),
-          periodo: {
-            inicio: new Date(periodoActicoDePersona.fechaInicio).toISOString(),
-            fin: new Date(periodoActicoDePersona.fechaFin).toISOString(),
-          },
-        });
-      }
-
-      // Obtener METODO DE VALUACION CONFIGURADO
-      const configuracionPeriodo =
-        await this.periodoContableService.obtenerConfiguracion(personaId);
-      const metodoValoracionFinal = configuracionPeriodo.metodoCalculoCosto;
-
-      // CLIENTE/PROVEEDOR relacionado al comprobante
-      const entidad = await this.entidadService.findEntity(
-        createComprobanteDto.idPersona,
-      );
-
-      // PERSONA quien crea el comprobante
-      const persona = await this.personaService.findById(personaId);
-      if (!persona) {
-        throw new Error(`Persona con ID ${personaId} no encontrada`);
-      }
-
-      // Obtener las entidades TablaDetalle para las relaciones
-      // Tipo de operación de la Tabla 12 y tipo de comprobante de la Tabla 10
-      const tipoOperacion = await this.tablaDetalleRepository.findOne({
-        where: {
-          idTablaDetalle: createComprobanteDto.idTipoOperacion,
-          tabla: { numeroTabla: '12' },
-        },
-      });
-      if (!tipoOperacion) {
-        throw new BadRequestException(
-          `Tipo de operación con ID ${createComprobanteDto.idTipoOperacion} no encontrado`,
-        );
-      }
-
-      const tipoComprobante = await this.tablaDetalleRepository.findOne({
-        where: {
-          idTablaDetalle: createComprobanteDto.idTipoComprobante,
-          tabla: { numeroTabla: '10' },
-        },
-      });
-      if (!tipoComprobante) {
-        throw new BadRequestException(
-          `Tipo de comprobante con ID ${createComprobanteDto.idTipoComprobante} no encontrado`,
-        );
-      }
-
-      // Asignación de CORRELATIVO
-      const correlativo = await this.findOrCreateCorrelativo(
-        createComprobanteDto.idTipoOperacion,
-        personaId,
-        queryRunner.manager,
-      );
-      correlativo.ultimoNumero += 1;
-      await queryRunner.manager.save(correlativo);
-
-      // Si existe comprobante afecto (notas), cargarlo
-      let comprobanteAfecto: Comprobante | null = null;
-      if (createComprobanteDto.idComprobanteAfecto) {
-        comprobanteAfecto = await this.comprobanteRepository.findOne({
-          where: { idComprobante: createComprobanteDto.idComprobanteAfecto },
-          relations: ['tipoOperacion'],
-        });
-      }
-
-      // Crea instancia de COMPROBANTE
-      const comprobante = queryRunner.manager.create(Comprobante, {
-        fechaEmision: fechaEmisionFinal,
-        moneda: createComprobanteDto.moneda,
-        tipoCambio: createComprobanteDto.tipoCambio,
-        serie: createComprobanteDto.serie,
-        numero: createComprobanteDto.numero,
-        fechaVencimiento: createComprobanteDto.fechaVencimiento,
-      });
-
-      //Asignamos ENTIDAD, PERSONA, RELACIONES y CORRELATIVO
-      comprobante.periodoContable = periodoActicoDePersona;
-      comprobante.entidad = entidad;
-      comprobante.persona = persona;
-      comprobante.tipoOperacion = tipoOperacion;
-      comprobante.tipoComprobante = tipoComprobante;
-      comprobante.correlativo = `CORR-${correlativo.ultimoNumero}`;
-      if (comprobanteAfecto) comprobante.comprobanteAfecto = comprobanteAfecto;
-
-      // Guarda el COMPROBANTE
-      const comprobanteSaved = await queryRunner.manager.save(comprobante);
-
-      let costosUnitarios: number[] = [];
-      let precioYcantidadPorLote: {
-        idLote: number;
-        costoUnitarioDeLote: number;
-        cantidad: number;
-      }[] = [];
-
-      //verificamos DETALLES
-      if (this.existDetails(createComprobanteDto)) {
-        // Registra DETALLES DE COMPROBANTE
-        const detallesSaved = await this.comprobanteDetalleService.register(
-          comprobanteSaved.idComprobante,
-          createComprobanteDto.detalles!,
-          queryRunner.manager,
-        );
-        comprobanteSaved.detalles = detallesSaved;
-        // Procesar lotes en función del tipo de operación y método de valoración
-        // Determinar modo de operación para procesar lotes (COMPRA/VENTA) considerando notas
-        let modoOperacionParaLote =
-          tipoOperacion.codigo === '02'
-            ? 'COMPRA'
-            : tipoOperacion.codigo === '01'
-              ? 'VENTA'
-              : tipoOperacion.descripcion;
-        if (['07', '08'].includes(tipoOperacion.codigo)) {
-          const esNotaCredito = tipoOperacion.codigo === '07';
-          const afectoCodigo = comprobanteAfecto?.tipoOperacion?.codigo;
-          if (afectoCodigo === '01') {
-            // Nota sobre VENTA
-            modoOperacionParaLote = esNotaCredito ? 'COMPRA' : 'VENTA';
-          } else if (afectoCodigo === '02') {
-            // Nota sobre COMPRA
-            modoOperacionParaLote = esNotaCredito ? 'VENTA' : 'COMPRA';
-          }
-        }
-
-        const { costoUnitario, lotes } =
-          await this.loteCreationService.procesarLotesComprobante(
-            detallesSaved,
-            modoOperacionParaLote,
-            metodoValoracionFinal,
-            fechaEmisionFinal,
-          );
-
-        costosUnitarios = costoUnitario;
-        precioYcantidadPorLote = lotes;
-
-        // Validar que los lotes se crearon correctamente para compras
-        if (tipoOperacion.codigo === '02') {
-          // Código "02" para COMPRA
-          const lotesValidos =
-            await this.loteCreationService.validarLotesCompra(detallesSaved);
-          if (!lotesValidos) {
-            throw new Error(
-              'Error al crear los lotes para la compra. Verifique los logs para más detalles.',
-            );
-          }
-        }
-      } else {
-        // No hay detalles: registrar totales usando el total enviado en el payload
-        await this.comprobanteTotalesService.registerFromTotal(
-          comprobanteSaved.idComprobante,
-          Number(createComprobanteDto.total ?? 0),
-          queryRunner.manager,
-        );
-      }
-
-      // Cargar las relaciones necesarias para el MovimientoFactory DESPUÉS de guardar los detalles
-      const comprobanteConRelaciones = await queryRunner.manager.findOne(
-        Comprobante,
-        {
-          where: { idComprobante: comprobanteSaved.idComprobante },
-          relations: [
-            'tipoOperacion',
-            'tipoComprobante',
-            'detalles',
-            'detalles.inventario',
-            'detalles.inventario.producto',
-            'comprobanteAfecto',
-            'comprobanteAfecto.tipoOperacion',
-          ],
-        },
-      );
-
-      if (!comprobanteConRelaciones) {
-        throw new Error('Error al cargar el comprobante con sus relaciones');
-      }
-
-      // Solo crear movimientos si hay detalles y la operación es VENTA ("01") o COMPRA ("02")
-      const tieneDetalles =
-        comprobanteConRelaciones.detalles &&
-        comprobanteConRelaciones.detalles.length > 0;
-      const esOperacionKardex = ['01', '02', '07', '08'].includes(
-        comprobanteConRelaciones.tipoOperacion?.codigo,
-      );
-
-      if (tieneDetalles && esOperacionKardex) {
-        const movimientoDto =
-          this.movimientoFactory.createMovimientoFromComprobante(
-            comprobanteConRelaciones,
-            costosUnitarios,
-            precioYcantidadPorLote,
-          );
-        await this.movimientoService.createWithManager(
-          movimientoDto,
-          queryRunner.manager,
-        );
-      }
-
-      await queryRunner.commitTransaction();
-      // Cargar comprobante con relaciones completas y devolver DTO
-      const savedWithRelations = await this.comprobanteRepository.findOne({
-        where: { idComprobante: comprobanteSaved.idComprobante },
-        relations: [
-          'totales',
-          'persona',
-          'entidad',
-          'tipoOperacion',
-          'tipoComprobante',
-          'detalles',
-          'detalles.inventario',
-          'detalles.inventario.producto',
-        ],
-      });
-
-      if (!savedWithRelations) {
-        throw new Error('Error al cargar el comprobante creado');
-      }
-
-      return plainToInstance(ResponseComprobanteDto, savedWithRelations, {
-        excludeExtraneousValues: true,
-      });
-    } catch (error: any) {
-      await queryRunner.rollbackTransaction();
-      if (error && typeof error === 'object' && 'status' in error) {
-        throw error;
-      }
-      // Errores de base de datos: los traduce el filtro global sin exponer detalles
-      if (error instanceof QueryFailedError) {
-        throw error;
-      }
-      throw new InternalServerErrorException({
-        message: 'Error al registrar el comprobante',
-        detalle: error?.message || 'Error desconocido',
-      });
-    } finally {
-      await queryRunner.release();
+    // Todo lo referenciado debe pertenecer a la empresa del usuario
+    await this.pertenencia.entidades([dto.idPersona], personaId);
+    await this.pertenencia.inventarios(
+      (dto.detalles ?? []).map((d) => d.idInventario),
+      personaId,
+    );
+    if (dto.idComprobanteAfecto) {
+      await this.pertenencia.comprobantes([dto.idComprobanteAfecto], personaId);
     }
+    if (this.existDetails(dto)) {
+      validarImportes(dto.detalles!);
+    }
+    if (dto.moneda === Moneda.USD && !(Number(dto.tipoCambio) > 0)) {
+      throw new BadRequestException(
+        'El tipo de cambio es obligatorio para comprobantes en dólares',
+      );
+    }
+
+    const idComprobante = await runInTransaction(() =>
+      this.registrarEnTransaccion(dto, personaId),
+    );
+
+    const guardado = await this.comprobanteRepository.findOne({
+      where: { idComprobante },
+      relations: [
+        'totales',
+        'persona',
+        'entidad',
+        'tipoOperacion',
+        'tipoComprobante',
+        'detalles',
+        'detalles.inventario',
+        'detalles.inventario.producto',
+      ],
+    });
+    return plainToInstance(ResponseComprobanteDto, guardado, {
+      excludeExtraneousValues: true,
+    });
+  }
+
+  /** Cuerpo transaccional de `register`. Devuelve el id del comprobante. */
+  private async registrarEnTransaccion(
+    dto: CreateComprobanteDto,
+    personaId: number,
+  ): Promise<number> {
+    // Dentro de runInTransaction este manager (y los repositorios) usan la transacción
+    const manager = this.dataSource.manager;
+
+    // Período contable vigente
+    const periodoActivoDto =
+      await this.periodoContableService.obtenerPeriodoActivo(personaId);
+    const periodo = await this.periodoContableService.obtenerPorId(
+      periodoActivoDto.id,
+    );
+    const fecha = fechaContable(dto.fechaEmision);
+    if (
+      ymdContable(fecha) < ymd(periodo.fechaInicio) ||
+      ymdContable(fecha) > ymd(periodo.fechaFin)
+    ) {
+      throw new BadRequestException({
+        message:
+          'La fecha de emisión del comprobante está fuera del período contable vigente',
+        fechaEmision: ymdContable(fecha),
+        periodo: {
+          inicio: ymd(periodo.fechaInicio),
+          fin: ymd(periodo.fechaFin),
+        },
+      });
+    }
+
+    const metodoValoracion = (
+      await this.periodoContableService.obtenerConfiguracion(personaId)
+    ).metodoCalculoCosto;
+    const entidad = await this.entidadService.findEntity(dto.idPersona);
+    const persona = await this.personaService.findById(personaId);
+
+    // Tipo de operación de la Tabla 12 y tipo de comprobante de la Tabla 10
+    const tipoOperacion = await this.tablaDetalleRepository.findOne({
+      where: {
+        idTablaDetalle: dto.idTipoOperacion,
+        tabla: { numeroTabla: '12' },
+      },
+    });
+    if (!tipoOperacion) {
+      throw new BadRequestException(
+        `Tipo de operación con ID ${dto.idTipoOperacion} no encontrado`,
+      );
+    }
+    const tipoComprobante = await this.tablaDetalleRepository.findOne({
+      where: {
+        idTablaDetalle: dto.idTipoComprobante,
+        tabla: { numeroTabla: '10' },
+      },
+    });
+    if (!tipoComprobante) {
+      throw new BadRequestException(
+        `Tipo de comprobante con ID ${dto.idTipoComprobante} no encontrado`,
+      );
+    }
+
+    // Un mismo documento (tipo, serie y número de la misma contraparte) no se registra dos veces
+    const duplicado = await manager.findOne(Comprobante, {
+      where: {
+        persona: { id: personaId },
+        entidad: { id: dto.idPersona },
+        tipoOperacion: { idTablaDetalle: tipoOperacion.idTablaDetalle },
+        tipoComprobante: { idTablaDetalle: tipoComprobante.idTablaDetalle },
+        serie: dto.serie,
+        numero: dto.numero,
+      },
+    });
+    if (duplicado) {
+      throw new ConflictException(
+        `El comprobante ${dto.serie}-${dto.numero} ya está registrado (${duplicado.correlativo})`,
+      );
+    }
+
+    // Comprobante afectado (notas de crédito/débito)
+    let comprobanteAfecto: Comprobante | null = null;
+    if (dto.idComprobanteAfecto) {
+      comprobanteAfecto = await manager.findOne(Comprobante, {
+        where: { idComprobante: dto.idComprobanteAfecto },
+        relations: ['tipoOperacion'],
+      });
+    }
+
+    const detalles = this.existDetails(dto) ? dto.detalles! : [];
+    const modo =
+      detalles.length > 0
+        ? modoInventario(
+            tipoOperacion.codigo,
+            tipoComprobante.codigo,
+            comprobanteAfecto?.tipoOperacion?.codigo,
+          )
+        : null;
+
+    if (modo) {
+      // Serializa los registros que tocan los mismos inventarios
+      await bloquearInventarios(
+        manager,
+        detalles.map((d) => d.idInventario),
+      );
+      if (modo === 'SALIDA') {
+        const porInventario = new Map<number, number>();
+        for (const d of detalles) {
+          porInventario.set(
+            d.idInventario,
+            (porInventario.get(d.idInventario) ?? 0) + Number(d.cantidad),
+          );
+        }
+        for (const [idInventario, cantidad] of porInventario) {
+          await validarStockEnElTiempo(manager, idInventario, cantidad, fecha);
+        }
+      }
+    }
+
+    // Correlativo interno
+    const correlativo = await this.findOrCreateCorrelativo(
+      dto.idTipoOperacion,
+      personaId,
+      manager,
+    );
+    correlativo.ultimoNumero += 1;
+    await manager.save(correlativo);
+
+    const comprobante = manager.create(Comprobante, {
+      fechaEmision: fecha,
+      moneda: dto.moneda,
+      tipoCambio: dto.tipoCambio,
+      serie: dto.serie,
+      numero: dto.numero,
+      fechaVencimiento: dto.fechaVencimiento,
+    });
+    comprobante.periodoContable = periodo;
+    comprobante.entidad = entidad;
+    comprobante.persona = persona!;
+    comprobante.tipoOperacion = tipoOperacion;
+    comprobante.tipoComprobante = tipoComprobante;
+    comprobante.correlativo = `CORR-${correlativo.ultimoNumero}`;
+    if (comprobanteAfecto) comprobante.comprobanteAfecto = comprobanteAfecto;
+    const guardado = await manager.save(comprobante);
+
+    if (detalles.length === 0) {
+      await this.comprobanteTotalesService.registerFromTotal(
+        guardado.idComprobante,
+        Number(dto.total ?? 0),
+        manager,
+      );
+      return guardado.idComprobante;
+    }
+
+    const detallesGuardados = await this.comprobanteDetalleService.register(
+      guardado.idComprobante,
+      detalles,
+      manager,
+    );
+    if (!modo) return guardado.idComprobante;
+
+    // Lotes (entrada) o consumo de lotes (salida). El costo se guarda en soles.
+    const factorCosto = dto.moneda === Moneda.USD ? Number(dto.tipoCambio) : 1;
+    const { costoUnitario, lotes } =
+      await this.loteCreationService.procesarLotesComprobante(
+        detallesGuardados,
+        modo,
+        metodoValoracion,
+        fecha,
+        factorCosto,
+      );
+
+    const conRelaciones = await manager.findOne(Comprobante, {
+      where: { idComprobante: guardado.idComprobante },
+      relations: [
+        'tipoOperacion',
+        'tipoComprobante',
+        'detalles',
+        'detalles.inventario',
+        'detalles.inventario.producto',
+      ],
+    });
+    const movimientoDto =
+      this.movimientoFactory.createMovimientoFromComprobante(
+        conRelaciones!,
+        costoUnitario,
+        lotes,
+        modo === 'ENTRADA' ? TipoMovimiento.ENTRADA : TipoMovimiento.SALIDA,
+      );
+    await this.movimientoService.createWithManager(movimientoDto, manager);
+
+    return guardado.idComprobante;
   }
 
   /**
@@ -428,8 +379,17 @@ export class ComprobanteService implements OnModuleInit {
     const comprobantes = await this.comprobanteRepository.find({
       where: {
         persona: { id: personaId },
-        // Excluir COMPRA (idTablaDetalle: 13) y VENTA (idTablaDetalle: 12)
-        tipoOperacion: { idTablaDetalle: Not(In([12, 13])) },
+        // Compras, ventas y transferencias tienen sus propios listados
+        tipoOperacion: {
+          idTablaDetalle: Not(
+            In([
+              await this.catalogo.operacion(OPERACION.VENTA),
+              await this.catalogo.operacion(OPERACION.COMPRA),
+              await this.catalogo.operacion(OPERACION.TRANSFERENCIA_INGRESO),
+              await this.catalogo.operacion(OPERACION.TRANSFERENCIA_SALIDA),
+            ]),
+          ),
+        },
       },
       relations: [
         'totales',

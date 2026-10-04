@@ -85,6 +85,20 @@ describe('Flujo de inventario (e2e)', () => {
       expect(await stockActual(fifo.api, inv)).toBe(5);
     });
 
+    it('el Estado de Costo de Ventas valoriza al costo, no al precio de venta', async () => {
+      const inventario = await fifo.api.get(`/api/inventario/${inv}`);
+      const idProducto = inventario.body.producto.id;
+      const res = await fifo.api.get(
+        `/api/costo-venta/reporte?año=2026&idProducto=${idProducto}`,
+      );
+      esperarStatus(res, 200);
+      const marzo = res.body.datosMensuales.find((d: any) => d.mes === 3);
+      // Compras 10×10 + 10×20; salida FIFO 10×10 + 5×20 (no 15×30 de venta)
+      expect(Number(marzo.comprasTotales)).toBeCloseTo(300, 2);
+      expect(Number(marzo.salidasTotales)).toBeCloseTo(200, 2);
+      expect(Number(marzo.inventarioFinal)).toBeCloseTo(100, 2);
+    });
+
     it('rechaza una venta mayor al stock disponible', async () => {
       const res = await vender(fifo.api, escFifo, '2026-03-12', [
         { idInventario: inv, cantidad: 6, precio: 30 },
@@ -130,25 +144,22 @@ describe('Flujo de inventario (e2e)', () => {
       expect(Number(k.costoFinal)).toBeCloseTo(200, 4);
     });
 
-    // D3 (fase 2): la venta retroactiva no considera lo que ya consumieron ventas posteriores.
-    test.failing(
-      'rechaza una venta retroactiva que deja stock negativo más adelante',
-      async () => {
-        const inv = await crearInventario(fifo.api, escFifo);
-        await comprar(fifo.api, escFifo, '2026-05-01', [
-          { idInventario: inv, cantidad: 10, precio: 10 },
-        ]);
-        const posterior = await vender(fifo.api, escFifo, '2026-05-20', [
-          { idInventario: inv, cantidad: 8, precio: 30 },
-        ]);
-        esperarStatus(posterior, 201);
+    // D3: la venta con fecha pasada también se valida contra las ventas posteriores
+    it('rechaza una venta retroactiva que deja stock negativo más adelante', async () => {
+      const inv = await crearInventario(fifo.api, escFifo);
+      await comprar(fifo.api, escFifo, '2026-05-01', [
+        { idInventario: inv, cantidad: 10, precio: 10 },
+      ]);
+      const posterior = await vender(fifo.api, escFifo, '2026-05-20', [
+        { idInventario: inv, cantidad: 8, precio: 30 },
+      ]);
+      esperarStatus(posterior, 201);
 
-        const retroactiva = await vender(fifo.api, escFifo, '2026-05-05', [
-          { idInventario: inv, cantidad: 5, precio: 30 },
-        ]);
-        expect(retroactiva.status).toBeGreaterThanOrEqual(400);
-      },
-    );
+      const retroactiva = await vender(fifo.api, escFifo, '2026-05-05', [
+        { idInventario: inv, cantidad: 5, precio: 30 },
+      ]);
+      expect(retroactiva.status).toBe(400);
+    });
   });
 
   describe('Listados', () => {

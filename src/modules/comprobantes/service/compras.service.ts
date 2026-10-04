@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { plainToInstance } from 'class-transformer';
 import { Comprobante } from '../entities/comprobante';
 import { TablaDetalle } from '../entities/tabla-detalle.entity';
+import { CatalogoService, OPERACION } from 'src/common/catalogo.service';
 import { ResponseComprobanteDto } from '../dto/comprobante/response-comprobante.dto';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class ComprasService {
     private readonly comprobanteRepository: Repository<Comprobante>,
     @InjectRepository(TablaDetalle)
     private readonly tablaDetalleRepository: Repository<TablaDetalle>,
+    private readonly catalogo: CatalogoService,
   ) {}
 
   /**
@@ -24,7 +26,9 @@ export class ComprasService {
     // Usar directamente el idTablaDetalle para COMPRA (13) de la Tabla 12
     const comprobantes = await this.comprobanteRepository.find({
       where: {
-        tipoOperacion: { idTablaDetalle: 14 }, // ID 13 para COMPRA en Tabla 12
+        tipoOperacion: {
+          idTablaDetalle: await this.catalogo.operacion(OPERACION.COMPRA),
+        },
         persona: { id: personaId },
       },
       relations: [
