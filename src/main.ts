@@ -4,6 +4,7 @@ dotenv.config();
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { setupSwagger } from './config/swagger.config';
+import { configureApp } from './config/app.config';
 import {
   addTransactionalDataSource,
   initializeTransactionalContext,
@@ -31,13 +32,7 @@ async function createApp(): Promise<Express> {
   const dataSource = app.get(DataSource);
   addTransactionalDataSource(dataSource);
 
-  // Habilitar CORS
-  app.enableCors({
-    origin: true, // Permitir todos los orígenes
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Métodos HTTP permitidos
-    allowedHeaders: ['Content-Type', 'Authorization'], // Headers permitidos
-    credentials: true, // Permitir cookies y credenciales
-  });
+  configureApp(app);
 
   // Configurar Swagger
   setupSwagger(app);
