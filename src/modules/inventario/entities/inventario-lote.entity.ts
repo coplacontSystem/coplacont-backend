@@ -67,6 +67,19 @@ export class InventarioLote {
   costoUnitario: number;
 
   /**
+   * Cantidad que queda en el lote según el kardex materializado (la escribe
+   * `KardexMaterializadoService`; null hasta que el inventario se materializa).
+   */
+  @Column({
+    name: 'cantidad_disponible',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
+  cantidadDisponible?: number | null;
+
+  /**
    * Número de lote o referencia (opcional)
    */
   @Column({

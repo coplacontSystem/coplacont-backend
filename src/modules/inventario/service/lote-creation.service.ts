@@ -4,8 +4,7 @@ import { Repository } from 'typeorm';
 import { InventarioLote } from '../entities/inventario-lote.entity';
 import { Inventario } from '../entities/inventario.entity';
 import { ComprobanteDetalle } from '../../comprobantes/entities/comprobante-detalle';
-import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
-import { ValoracionService } from '../valoracion/valoracion.service';
+import { KardexMaterializadoService } from '../valoracion/kardex-materializado.service';
 
 /**
  * Servicio simplificado para creación de lotes sin campos calculados
@@ -18,7 +17,7 @@ export class LoteCreationService {
     private readonly loteRepository: Repository<InventarioLote>,
     @InjectRepository(Inventario)
     private readonly inventarioRepository: Repository<Inventario>,
-    private readonly valoracion: ValoracionService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   /**
@@ -31,7 +30,6 @@ export class LoteCreationService {
   async procesarLotesComprobante(
     detalles: ComprobanteDetalle[],
     modo: 'ENTRADA' | 'SALIDA',
-    metodoValoracion: MetodoValoracion = MetodoValoracion.PROMEDIO,
     fechaEmision: Date,
     factorCosto = 1,
     costosEntrada?: Map<number, number>,
@@ -40,13 +38,13 @@ export class LoteCreationService {
     lotes: { idLote: number; costoUnitarioDeLote: number; cantidad: number }[];
   }> {
     if (modo === 'SALIDA') {
-      const costeadas = await this.valoracion.costearSalidas(
+      // El método sale del período contable de cada fecha (ver ValoracionService)
+      const costeadas = await this.kardex.costearSalidas(
         detalles.map((d) => ({
           idInventario: Number(d.inventario.id),
           cantidad: Number(d.cantidad),
         })),
         fechaEmision,
-        metodoValoracion,
       );
       return {
         costoUnitario: costeadas.map((c) => c.costoUnitario),

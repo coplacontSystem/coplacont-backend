@@ -1,12 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
-import { EntityManager } from 'typeorm';
 import { COMPROBANTE, OPERACION } from 'src/common/catalogo.service';
 import { CreateComprobanteDetalleDto } from '../dto/comprobante-detalle/create-comprobante-detalle.dto';
 
 /** Tolerancia para comparar importes redondeados a céntimos. */
 const TOLERANCIA = 0.011;
-/** Espacio de nombres de los advisory locks de inventario. */
-const LOCK_INVENTARIO = 7301;
 
 export type ModoInventario = 'ENTRADA' | 'SALIDA';
 
@@ -114,20 +111,5 @@ export function modoInventario(
   return modo;
 }
 
-/**
- * Bloquea los inventarios hasta el fin de la transacción. Dos registros que
- * tocan el mismo inventario se serializan (evita vender dos veces el mismo stock).
- * Se bloquean en orden para no generar deadlocks.
- */
-export async function bloquearInventarios(
-  manager: EntityManager,
-  ids: number[],
-): Promise<void> {
-  const ordenados = [...new Set(ids.map(Number))].sort((a, b) => a - b);
-  for (const id of ordenados) {
-    await manager.query('SELECT pg_advisory_xact_lock($1, $2)', [
-      LOCK_INVENTARIO,
-      id,
-    ]);
-  }
-}
+// Vive con el kardex materializado, que también lo usa
+export { bloquearInventarios } from 'src/modules/inventario/valoracion/bloqueo';

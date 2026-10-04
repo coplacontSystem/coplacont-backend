@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { MovimientosRepository } from '../repository/movimientos.repository';
+import { KardexMaterializadoService } from 'src/modules/inventario/valoracion/kardex-materializado.service';
 import { CreateMovimientoDto } from '../dto/create-movimiento.dto';
 import { ResponseMovimientoDto } from '../dto/response-movimiento.dto';
 import { TipoMovimiento } from '../enum/tipo-movimiento.enum';
@@ -18,7 +19,10 @@ import { EstadoMovimiento } from '../enum/estado-movimiento.enum';
 export class MovimientosService {
   private readonly logger = new Logger(MovimientosService.name);
 
-  constructor(private readonly movimientosRepository: MovimientosRepository) {}
+  constructor(
+    private readonly movimientosRepository: MovimientosRepository,
+    private readonly kardex: KardexMaterializadoService,
+  ) {}
 
   /**
    * Crear un nuevo movimiento
@@ -32,6 +36,7 @@ export class MovimientosService {
     // Crear el movimiento
     const movimiento =
       await this.movimientosRepository.create(createMovimientoDto);
+    await this.kardex.marcarPendientePorMovimiento(movimiento.id);
     return this.mapToResponseDto(movimiento);
   }
 
@@ -128,6 +133,8 @@ export class MovimientosService {
       id,
       estado,
     );
+    // Solo los movimientos procesados cuentan en el kardex
+    await this.kardex.marcarPendientePorMovimiento(id);
     return this.mapToResponseDto(updatedMovimiento);
   }
 

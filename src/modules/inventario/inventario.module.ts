@@ -1,4 +1,7 @@
 import { ValoracionService } from './valoracion/valoracion.service';
+import { KardexMaterializadoService } from './valoracion/kardex-materializado.service';
+import { KardexLinea } from './entities/kardex-linea.entity';
+import { InventarioSaldo } from './entities/inventario-saldo.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Inventario } from './entities/inventario.entity';
@@ -42,6 +45,8 @@ import { PeriodosModule } from '../periodos/periodos.module';
       MovimientoDetalle,
       ComprobanteDetalle,
       TablaDetalle,
+      KardexLinea,
+      InventarioSaldo,
     ]),
     ProductosModule,
     UserModule,
@@ -68,6 +73,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     KardexRepository,
     CostoVentaRepository,
     ValoracionService,
+    KardexMaterializadoService,
   ],
   exports: [
     InventarioService,
@@ -80,6 +86,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     KardexService,
     CostoVentaService,
     ValoracionService,
+    KardexMaterializadoService,
     TypeOrmModule,
   ],
 })

@@ -176,4 +176,30 @@ describe('motor de valoración', () => {
     });
     expect(saldo.lotes[0].cantidad).toBe(4);
   });
+
+  it('aplica el método de cada período según la fecha', () => {
+    // 2025 con FIFO, 2026 con PROMEDIO
+    const metodo = (fecha: Date) =>
+      fecha.getUTCFullYear() === 2025 ? FIFO : PROMEDIO;
+    const movs = [
+      entrada('2025-12-01', 10, 10),
+      entrada('2025-12-02', 10, 20),
+      salida('2025-12-03', 5), // FIFO: 5 × 10
+      salida('2026-01-03', 5), // PROMEDIO: saldo 15 u, valor 250
+    ];
+    const r = valorizar(ordenarMovimientos(movs), metodo);
+    expect(round(r.lineas[2].costoUnitario)).toBe(10);
+    expect(round(r.lineas[3].costoUnitario)).toBe(round(250 / 15));
+  });
+
+  it('usa el costo conocido de una salida anterior al tramo', () => {
+    const devolucion = entrada('2026-03-12', 2, 30, { costoDeSalidas: [999] });
+    const r = valorizar(
+      [devolucion],
+      PROMEDIO,
+      undefined,
+      new Map([[999, { cantidad: 4, costo: 44 }]]),
+    );
+    expect(r.lineas[0].costoUnitario).toBe(11);
+  });
 });

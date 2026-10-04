@@ -1,3 +1,4 @@
+import { KardexMaterializadoService } from '../valoracion/kardex-materializado.service';
 import {
   Injectable,
   NotFoundException,
@@ -38,6 +39,7 @@ export class InventarioService {
     private readonly inventarioLoteService: InventarioLoteService,
     private readonly periodoContableService: PeriodoContableService,
     private readonly stockCacheService: StockCacheService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   private readonly logger = new Logger(InventarioService.name);
@@ -366,8 +368,8 @@ export class InventarioService {
       await this.movimientoDetalleRepository.save(detalle);
     }
 
-    // Invalidar caché de stock para reflejar el cambio
-    this.stockCacheService.invalidateInventario(idInventario);
+    // El inventario inicial cambia el kardex desde el inicio
+    await this.kardex.marcarPendiente([idInventario]);
 
     const movimiento = detalle.movimiento;
     return {

@@ -33,7 +33,7 @@ import {
   COMPROBANTE,
   OPERACION,
 } from 'src/common/catalogo.service';
-import { ValoracionService } from 'src/modules/inventario/valoracion/valoracion.service';
+import { KardexMaterializadoService } from 'src/modules/inventario/valoracion/kardex-materializado.service';
 
 @Injectable()
 export class ComprobanteService implements OnModuleInit {
@@ -55,7 +55,7 @@ export class ComprobanteService implements OnModuleInit {
     private readonly dataSource: DataSource,
     private readonly pertenencia: PertenenciaService,
     private readonly catalogo: CatalogoService,
-    private readonly valoracion: ValoracionService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   /**
@@ -192,10 +192,6 @@ export class ComprobanteService implements OnModuleInit {
         },
       });
     }
-
-    const metodoValoracion = (
-      await this.periodoContableService.obtenerConfiguracion(personaId)
-    ).metodoCalculoCosto;
     const entidad = await this.entidadService.findEntity(dto.idPersona);
     const persona = await this.personaService.findById(personaId);
 
@@ -318,17 +314,15 @@ export class ComprobanteService implements OnModuleInit {
       tipoComprobante.codigo === COMPROBANTE.NOTA_CREDITO &&
       comprobanteAfecto?.tipoOperacion?.codigo === OPERACION.VENTA;
     const costosEntrada = esDevolucionDeVenta
-      ? await this.valoracion.costoDeSalidaDe(
+      ? await this.kardex.costoDeSalidaDe(
           comprobanteAfecto!.idComprobante,
           detalles.map((d) => d.idInventario),
-          metodoValoracion,
         )
       : undefined;
     const { costoUnitario, lotes } =
       await this.loteCreationService.procesarLotesComprobante(
         detallesGuardados,
         modo,
-        metodoValoracion,
         fecha,
         factorCosto,
         costosEntrada,
@@ -352,6 +346,11 @@ export class ComprobanteService implements OnModuleInit {
         modo === 'ENTRADA' ? TipoMovimiento.ENTRADA : TipoMovimiento.SALIDA,
       );
     await this.movimientoService.createWithManager(movimientoDto, manager);
+    // Kardex materializado: recalcula desde el día del comprobante
+    await this.kardex.recalcularDesde(
+      detalles.map((d) => d.idInventario),
+      ymdContable(fecha),
+    );
 
     return guardado.idComprobante;
   }

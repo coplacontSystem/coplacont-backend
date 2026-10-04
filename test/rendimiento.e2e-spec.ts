@@ -58,9 +58,18 @@ const OPERACIONES = Number(process.env.BENCH_OPERACIONES ?? 12);
     ds.driver.createQueryRunner = (mode) => {
       const qr = original(mode);
       const query = qr.query.bind(qr);
-      qr.query = (...args: Parameters<typeof qr.query>) => {
+      qr.query = async (...args: Parameters<typeof qr.query>) => {
         consultas++;
-        return query(...args);
+        const t0 = performance.now();
+        const r = await query(...args);
+        const ms = performance.now() - t0;
+        // BENCH_LENTAS=<ms>: muestra las consultas más lentas que ese umbral
+        if (process.env.BENCH_LENTAS && ms > Number(process.env.BENCH_LENTAS)) {
+          console.log(
+            `[LENTA] ${ms.toFixed(1)} ms ${String(args[0]).replace(/\s+/g, ' ').slice(0, 120)}`,
+          );
+        }
+        return r;
       };
       return qr;
     };

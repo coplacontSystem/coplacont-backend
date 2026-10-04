@@ -104,20 +104,31 @@ export function ordenarMovimientos<T extends MovimientoValorizable>(
     .map((x) => x.m);
 }
 
+/** Método fijo, o según la fecha (cada período contable guarda el suyo). */
+export type MetodoSegunFecha =
+  | MetodoValoracion
+  | ((fecha: Date) => MetodoValoracion);
+
+/** Costo de salidas anteriores al tramo valorizado (para devoluciones). */
+export type CostosDeSalidas = Map<number, { cantidad: number; costo: number }>;
+
 /**
  * Valoriza los movimientos (ya ordenados con `ordenarMovimientos`) a partir de
  * un saldo inicial. No modifica el saldo recibido.
  */
 export function valorizar(
   movimientos: MovimientoValorizable[],
-  metodo: MetodoValoracion,
+  metodo: MetodoSegunFecha,
   saldoInicial: SaldoValorizado = saldoVacio(),
+  costosConocidos?: CostosDeSalidas,
 ): ResultadoValoracion {
   let cantidad = saldoInicial.cantidad;
   let valor = saldoInicial.valor;
   const lotes = saldoInicial.lotes.map((l) => ({ ...l }));
   let siguienteOrden = lotes.reduce((max, l) => Math.max(max, l.orden), 0) + 1;
-  const costoPorSalida = new Map<number, { cantidad: number; costo: number }>();
+  const costoPorSalida: CostosDeSalidas = new Map(costosConocidos);
+  const metodoDe = (fecha: Date) =>
+    typeof metodo === 'function' ? metodo(fecha) : metodo;
   const lineas: LineaValorizada[] = [];
 
   for (const mov of movimientos) {
@@ -153,7 +164,7 @@ export function valorizar(
         0,
       );
 
-      if (metodo === MetodoValoracion.PROMEDIO) {
+      if (metodoDe(mov.fecha) === MetodoValoracion.PROMEDIO) {
         const promedio = cantidad > EPSILON ? valor / cantidad : 0;
         costoUnitario = promedio;
         costoTotal = disponible * promedio;

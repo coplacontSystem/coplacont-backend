@@ -85,6 +85,8 @@ export class PeriodoContableService {
       persona: { id: personaId },
       activo: true,
       cerrado: false,
+      // El período se valoriza con el método vigente al crearlo
+      metodoValoracion: configuracion.metodoCalculoCosto,
     });
 
     const periodoGuardado = await this.periodoRepository.save(nuevoPeriodo);
@@ -589,6 +591,26 @@ export class PeriodoContableService {
     if (!periodoActivo) {
       throw new BadRequestException('No hay un período activo configurado');
     }
+    // Solo al inicio del ejercicio: si el período ya tiene movimientos de
+    // inventario, cambiar el método revalorizaría lo ya registrado
+    const [conMovimientos] = await this.periodoRepository.query(
+      `SELECT 1
+         FROM periodo_contable p
+         JOIN almacen a ON a.id_persona = p.id_persona
+         JOIN inventario i ON i.id_almacen = a.id
+         JOIN movimiento_detalles md ON md.id_inventario = i.id
+         JOIN movimientos m ON m.id = md.id_movimiento AND m.estado = 'PROCESADO'
+        WHERE p.id = $1
+          AND m.fecha >= p."fechaInicio" AND m.fecha < p."fechaFin" + 1
+        LIMIT 1`,
+      [periodoActivo.id],
+    );
+    if (conMovimientos) {
+      throw new BadRequestException(
+        `El método de valoración solo se puede cambiar al inicio del ejercicio: ` +
+          `el período ${periodoActivo.año} ya tiene movimientos de inventario`,
+      );
+    }
   }
 
   /**
@@ -603,12 +625,20 @@ export class PeriodoContableService {
     // Validar que se pueda cambiar
     await this.validarCambioMetodoValoracion(personaId);
 
-    // Obtener configuración actual
     const configuracion = await this.obtenerConfiguracion(personaId);
+    const periodoActivo = await this.obtenerPeriodoActivo(personaId);
 
-    // Actualizar método
+    // Los demás períodos conservan el método con que se valorizaron
+    await this.periodoRepository.query(
+      `UPDATE periodo_contable SET "metodoValoracion" = $2
+        WHERE id_persona = $1 AND "metodoValoracion" IS NULL AND id <> $3`,
+      [personaId, configuracion.metodoCalculoCosto, periodoActivo.id],
+    );
+    await this.periodoRepository.update(periodoActivo.id, {
+      metodoValoracion: nuevoMetodo,
+    });
+
     configuracion.metodoCalculoCosto = nuevoMetodo;
-
     return await this.configuracionRepository.save(configuracion);
   }
 

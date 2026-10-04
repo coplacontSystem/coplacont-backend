@@ -1,12 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
 import {
-  ConsumoLote,
   diaDe,
-  EPSILON,
-  LineaValorizada,
+  MetodoSegunFecha,
   MovimientoValorizable,
   ordenarMovimientos,
   ResultadoValoracion,
@@ -31,19 +29,6 @@ export interface InventarioValorizado {
   resultado: ResultadoValoracion;
 }
 
-export interface SalidaPorCostear {
-  idInventario: number;
-  cantidad: number;
-}
-
-export interface SalidaCosteada {
-  costoUnitario: number;
-  consumos: ConsumoLote[];
-}
-
-/** Ids provisionales para salidas que aún no existen (van después de todo lo registrado). */
-const ID_PROVISIONAL = 1e15;
-
 /**
  * Lee los movimientos de inventario y los pasa por el motor de valoración.
  * Usa `dataSource.manager`, que dentro de `runInTransaction` es el de la transacción.
@@ -52,9 +37,13 @@ const ID_PROVISIONAL = 1e15;
 export class ValoracionService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
-  /** Movimientos procesados de los inventarios, en orden contable. */
+  /**
+   * Movimientos procesados de los inventarios, en orden contable.
+   * Con `desdeDia` ('YYYY-MM-DD') solo los de ese día en adelante.
+   */
   async cargarMovimientos(
     idsInventario: number[],
+    desdeDia?: string | null,
   ): Promise<Map<number, MovimientoInventario[]>> {
     const ids = [...new Set(idsInventario.map(Number))];
     const porInventario = new Map<number, MovimientoInventario[]>(
@@ -105,8 +94,10 @@ export class ValoracionService {
          LEFT JOIN comprobante c ON c."idComprobante" = m.id_comprobante
          LEFT JOIN tabla_detalle top ON top."idTablaDetalle" = c.id_tipo_operacion
          LEFT JOIN tabla_detalle tco ON tco."idTablaDetalle" = c.id_tipo_comprobante
-        WHERE md.id_inventario = ANY($1)`,
-      [ids],
+        WHERE md.id_inventario = ANY($1)
+          -- Un día de margen por la zona horaria; el corte exacto se hace abajo
+          AND ($2::date IS NULL OR m.fecha >= $2::date - 1)`,
+      [ids, desdeDia ?? null],
     );
 
     for (const f of filas) {
@@ -148,8 +139,9 @@ export class ValoracionService {
               l."costoUnitario" AS costo, to_char(l."fechaIngreso", 'YYYY-MM-DD') AS fecha
          FROM inventario_lote l
         WHERE l.id_inventario = ANY($1) AND l."cantidadInicial" > 0
-          AND NOT EXISTS (SELECT 1 FROM movimiento_detalles x WHERE x.id_lote = l.id)`,
-      [ids],
+          AND NOT EXISTS (SELECT 1 FROM movimiento_detalles x WHERE x.id_lote = l.id)
+          AND ($2::date IS NULL OR l."fechaIngreso" >= $2::date)`,
+      [ids, desdeDia ?? null],
     );
     for (const l of iniciales) {
       porInventario.get(Number(l.id_inventario))?.push({
@@ -173,169 +165,81 @@ export class ValoracionService {
     }
 
     for (const [id, lista] of porInventario) {
-      porInventario.set(id, ordenarMovimientos(lista));
+      porInventario.set(
+        id,
+        ordenarMovimientos(
+          desdeDia ? lista.filter((m) => diaDe(m.fecha) >= desdeDia) : lista,
+        ),
+      );
     }
     return porInventario;
   }
 
-  /** Valoriza el historial completo de cada inventario. */
-  async valorizarInventarios(
+  /**
+   * Método de valoración de cada inventario según la fecha: el del período
+   * contable de su empresa que contiene esa fecha o, si no lo fija, el de la
+   * configuración de la empresa.
+   */
+  async metodosPara(
     idsInventario: number[],
-    metodo: MetodoValoracion,
-  ): Promise<Map<number, InventarioValorizado>> {
-    const movimientos = await this.cargarMovimientos(idsInventario);
-    const resultado = new Map<number, InventarioValorizado>();
-    for (const [id, lista] of movimientos) {
-      resultado.set(id, {
-        movimientos: lista,
-        resultado: valorizar(lista, metodo),
+  ): Promise<Map<number, (fecha: Date) => MetodoValoracion>> {
+    const ids = [...new Set(idsInventario.map(Number))];
+    const resultado = new Map<number, (fecha: Date) => MetodoValoracion>();
+    if (ids.length === 0) return resultado;
+    const filas: {
+      id_inventario: string;
+      metodo_empresa: MetodoValoracion | null;
+      periodos: { inicio: string; fin: string; metodo: MetodoValoracion }[];
+    }[] = await this.dataSource.manager.query(
+      `SELECT i.id AS id_inventario,
+              (SELECT cp."metodoCalculoCosto"::text FROM configuracion_periodo cp
+                WHERE cp.id_persona = a.id_persona AND cp.activa
+                ORDER BY cp.id LIMIT 1) AS metodo_empresa,
+              COALESCE((SELECT json_agg(json_build_object(
+                         'inicio', to_char(p."fechaInicio", 'YYYY-MM-DD'),
+                         'fin', to_char(p."fechaFin", 'YYYY-MM-DD'),
+                         'metodo', p."metodoValoracion"))
+                  FROM periodo_contable p
+                 WHERE p.id_persona = a.id_persona AND p."metodoValoracion" IS NOT NULL),
+                '[]') AS periodos
+         FROM inventario i
+         JOIN almacen a ON a.id = i.id_almacen
+        WHERE i.id = ANY($1)`,
+      [ids],
+    );
+    for (const f of filas) {
+      const porDefecto = f.metodo_empresa ?? MetodoValoracion.PROMEDIO;
+      resultado.set(Number(f.id_inventario), (fecha: Date) => {
+        const dia = diaDe(fecha);
+        return (
+          f.periodos.find((p) => p.inicio <= dia && dia <= p.fin)?.metodo ??
+          porDefecto
+        );
       });
     }
     return resultado;
   }
 
   /**
-   * Costo y lotes de salidas por registrar en `fecha`, en el orden recibido.
-   * Valoriza el historial con las salidas insertadas en su fecha; si dejan sin
-   * stock a la propia salida o a una posterior, lanza 400 (stock en el tiempo).
-   * Si hay salidas posteriores (registro retroactivo), reasigna sus lotes.
-   * Llamar dentro de la transacción, con los inventarios ya bloqueados
-   * (`bloquearInventarios`).
+   * Valoriza desde cero el historial completo de cada inventario (cálculo
+   * dinámico). Sin `metodo`, el de cada período contable.
    */
-  async costearSalidas(
-    salidas: SalidaPorCostear[],
-    fecha: Date,
-    metodo: MetodoValoracion,
-  ): Promise<SalidaCosteada[]> {
-    const historial = await this.cargarMovimientos(
-      salidas.map((s) => s.idInventario),
-    );
-    const costeadas: SalidaCosteada[] = new Array<SalidaCosteada>(
-      salidas.length,
-    );
-
-    for (const [idInventario, existentes] of historial) {
-      const nuevas = salidas
-        .map((s, i) => ({ s, i }))
-        .filter(({ s }) => Number(s.idInventario) === idInventario)
-        .map(({ s, i }) => ({
-          indice: i,
-          mov: {
-            id: ID_PROVISIONAL + i,
-            fecha,
-            tipo: 'SALIDA' as const,
-            cantidad: Number(s.cantidad),
-          },
-        }));
-
-      const antes = valorizar(existentes, metodo);
-      const despues = valorizar(
-        ordenarMovimientos([...existentes, ...nuevas.map((n) => n.mov)]),
-        metodo,
-      );
-      const faltante = (r: ResultadoValoracion) =>
-        r.lineas.reduce((s, l) => s + l.faltante, 0);
-
-      if (faltante(despues) - faltante(antes) > EPSILON) {
-        const propias = despues.lineas.filter((l) => l.id >= ID_PROVISIONAL);
-        const faltaEnPropias = propias.some((l) => l.faltante > EPSILON);
-        const disponible = antes.lineas
-          .filter((l) => diaDe(l.fecha) <= diaDe(fecha))
-          .slice(-1)[0]?.saldoCantidad;
-        throw new BadRequestException(
-          faltaEnPropias
-            ? `Stock insuficiente para el inventario ${idInventario}: disponible al ` +
-              `${diaDe(fecha)}: ${Number(disponible ?? 0).toFixed(4)}`
-            : `Stock insuficiente para el inventario ${idInventario}: con esta salida ` +
-              'faltaría stock para salidas posteriores (revise ventas posteriores)',
-        );
-      }
-
-      // Salidas ya registradas después de las nuevas: el FIFO físico cambió
-      const primeraNueva = despues.lineas.findIndex(
-        (l) => l.id >= ID_PROVISIONAL,
-      );
-      await this.reasignarLotes(
-        despues.lineas
-          .slice(primeraNueva)
-          .filter(
-            (l) => l.tipo === 'SALIDA' && l.id > 0 && l.id < ID_PROVISIONAL,
-          ),
-      );
-
-      for (const { indice, mov } of nuevas) {
-        const linea = despues.lineas.find((l) => l.id === mov.id)!;
-        costeadas[indice] = {
-          costoUnitario: linea.costoUnitario,
-          // Lotes ficticios (entradas sin lote) se registran como lote 0
-          consumos: linea.consumos.map((c) => ({
-            ...c,
-            idLote: c.idLote > 0 ? c.idLote : 0,
-          })),
-        };
-      }
-    }
-    return costeadas;
-  }
-
-  /** Reemplaza los lotes consumidos (`detalle_salidas`) de salidas ya registradas. */
-  private async reasignarLotes(lineas: LineaValorizada[]): Promise<void> {
-    if (lineas.length === 0) return;
-    const manager = this.dataSource.manager;
-    const salidas: { id: string }[] = await manager.query(
-      `SELECT md.id FROM movimiento_detalles md
-         JOIN movimientos m ON m.id = md.id_movimiento
-        WHERE md.id = ANY($1) AND m.tipo = 'SALIDA'`,
-      [lineas.map((l) => l.id)],
-    );
-    const ids = new Set(salidas.map((s) => Number(s.id)));
-    const filas = lineas
-      .filter((l) => ids.has(l.id))
-      .flatMap((l) =>
-        l.consumos.map((c) => [
-          l.id,
-          c.idLote > 0 ? c.idLote : 0,
-          c.costoUnitario,
-          c.cantidad,
-        ]),
-      );
-    await manager.query(
-      'DELETE FROM detalle_salidas WHERE id_movimiento_detalle = ANY($1)',
-      [[...ids]],
-    );
-    if (filas.length === 0) return;
-    await manager.query(
-      `INSERT INTO detalle_salidas
-         (id_movimiento_detalle, id_lote, costo_unitario_de_lote, cantidad)
-       SELECT * FROM unnest($1::int[], $2::int[], $3::numeric[], $4::numeric[])`,
-      [0, 1, 2, 3].map((k) => filas.map((f) => f[k])),
-    );
-  }
-
-  /**
-   * Costo unitario con que salió cada inventario en un comprobante (para que
-   * su devolución reingrese a ese costo). Sin salida registrada, no hay entrada.
-   */
-  async costoDeSalidaDe(
-    idComprobante: number,
+  async valorizarInventarios(
     idsInventario: number[],
-    metodo: MetodoValoracion,
-  ): Promise<Map<number, number>> {
-    const costos = new Map<number, number>();
-    const valorizados = await this.valorizarInventarios(idsInventario, metodo);
-    const ids: { id: string }[] = await this.dataSource.manager.query(
-      `SELECT md.id FROM movimientos m
-         JOIN movimiento_detalles md ON md.id_movimiento = m.id
-        WHERE m.id_comprobante = $1 AND m.tipo = 'SALIDA' AND m.estado = 'PROCESADO'`,
-      [idComprobante],
-    );
-    const salidas = new Set(ids.map((r) => Number(r.id)));
-    for (const [idInventario, { resultado }] of valorizados) {
-      const lineas = resultado.lineas.filter((l) => salidas.has(l.id));
-      const cantidad = lineas.reduce((s, l) => s + l.cantidad - l.faltante, 0);
-      const costo = lineas.reduce((s, l) => s + l.costoTotal, 0);
-      if (cantidad > EPSILON) costos.set(idInventario, costo / cantidad);
+    metodo?: MetodoSegunFecha,
+  ): Promise<Map<number, InventarioValorizado>> {
+    const movimientos = await this.cargarMovimientos(idsInventario);
+    const metodos = metodo ? null : await this.metodosPara(idsInventario);
+    const resultado = new Map<number, InventarioValorizado>();
+    for (const [id, lista] of movimientos) {
+      resultado.set(id, {
+        movimientos: lista,
+        resultado: valorizar(
+          lista,
+          metodo ?? metodos!.get(id) ?? MetodoValoracion.PROMEDIO,
+        ),
+      });
     }
-    return costos;
+    return resultado;
   }
 }

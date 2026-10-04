@@ -10,6 +10,7 @@ import { Inventario } from '../entities/inventario.entity';
 import { CreateInventarioLoteDto } from '../dto/inventario-lote/create-inventario-lote.dto';
 import { UpdateInventarioLoteDto } from '../dto/inventario-lote/update-inventario-lote.dto';
 import { StockCalculationService } from './stock-calculation.service';
+import { KardexMaterializadoService } from '../valoracion/kardex-materializado.service';
 
 /**
  * Servicio para la gestión de lotes de inventario
@@ -23,6 +24,7 @@ export class InventarioLoteService {
     @InjectRepository(Inventario)
     private readonly inventarioRepository: Repository<Inventario>,
     private readonly stockCalculationService: StockCalculationService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   /**
@@ -85,8 +87,8 @@ export class InventarioLoteService {
     });
 
     const loteGuardado = await this.inventarioLoteRepository.save(lote);
-
-    // El stock se calcula dinámicamente, no se actualiza directamente
+    // Un lote con cantidad inicial entra al kardex en su fecha de ingreso
+    await this.kardex.marcarPendiente([inventario.id]);
 
     return loteGuardado;
   }
@@ -303,8 +305,8 @@ export class InventarioLoteService {
     if (estado !== undefined) lote.estado = estado;
 
     const loteActualizado = await this.inventarioLoteRepository.save(lote);
-
-    // El stock se calcula dinámicamente, no se actualiza directamente
+    // Cantidad, costo o fecha del lote cambian el kardex
+    await this.kardex.marcarPendiente([lote.inventario.id]);
 
     return loteActualizado;
   }

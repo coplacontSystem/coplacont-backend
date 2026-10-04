@@ -26,6 +26,7 @@ import { Inventario } from 'src/modules/inventario/entities';
 import { Almacen } from 'src/modules/almacen/entities/almacen.entity';
 import { Producto } from 'src/modules/productos/entities/producto.entity';
 import { PertenenciaService } from 'src/common/pertenencia.service';
+import { KardexMaterializadoService } from 'src/modules/inventario/valoracion/kardex-materializado.service';
 import {
   CatalogoService,
   COMPROBANTE,
@@ -51,6 +52,7 @@ export class TransferenciasService {
     private readonly dataSource: DataSource,
     private readonly pertenencia: PertenenciaService,
     private readonly catalogo: CatalogoService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   async registerTransfer(
@@ -89,10 +91,6 @@ export class TransferenciasService {
       if (!persona) {
         throw new Error(`Persona con ID ${personaId} no encontrada`);
       }
-
-      const metodoValoracion = (
-        await this.periodoContableService.obtenerConfiguracion(personaId)
-      ).metodoCalculoCosto;
 
       const tipoOperacionEntrada = await this.tablaDetalleRepository.findOne({
         where: {
@@ -210,7 +208,6 @@ export class TransferenciasService {
         await this.loteCreationService.procesarLotesComprobante(
           detallesSalidaSaved,
           'SALIDA',
-          metodoValoracion,
           fechaEmision,
         );
 
@@ -304,7 +301,6 @@ export class TransferenciasService {
         await this.loteCreationService.procesarLotesComprobante(
           detallesEntradaSaved,
           'ENTRADA',
-          metodoValoracion,
           fechaEmision,
         );
 
@@ -333,6 +329,13 @@ export class TransferenciasService {
       await this.movimientoService.createWithManager(
         movimientoEntradaDto,
         manager,
+      );
+      await this.kardex.recalcularDesde(
+        [
+          ...inventariosOrigen.map((i) => Number(i.id)),
+          ...inventariosDestino.map((i) => Number(i.id)),
+        ],
+        ymdContable(fechaEmision),
       );
 
       const salidaWithRelations = await this.comprobanteRepository.findOne({

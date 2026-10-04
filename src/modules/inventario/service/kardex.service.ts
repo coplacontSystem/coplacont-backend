@@ -55,17 +55,12 @@ export class KardexService {
       throw new Error('ID de persona no proporcionado');
     }
 
-    // Determinar método de valoración
-    const configuracionPeriodo =
-      await this.periodoContableService.obtenerConfiguracion(personaId);
-    const metodoValoracion = configuracionPeriodo.metodoCalculoCosto;
-    // Usar KardexCalculationService para cálculo dinámico
+    // El método de valoración es el de cada período contable
     const kardexResult: KardexResult | null =
       await this.kardexCalculationService.generarKardex(
         idInventario,
         fechaInicioDate || new Date('1900-01-01'), // Si no hay fecha inicio, usar fecha muy antigua
         fechaFinDate || new Date(), // Si no hay fecha fin, usar fecha actual
-        metodoValoracion,
       );
 
     if (!kardexResult) {

@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventarioLote } from '../entities/inventario-lote.entity';
+import {
+  KardexMaterializadoService,
+  leerKardexMaterializado,
+} from '../valoracion/kardex-materializado.service';
 
 /**
  * Interfaz para el resultado del cálculo de stock de lote
@@ -34,6 +38,7 @@ export class StockCalculationService {
   constructor(
     @InjectRepository(InventarioLote)
     private readonly loteRepository: Repository<InventarioLote>,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   /**
@@ -87,11 +92,45 @@ export class StockCalculationService {
   }
 
   /**
-   * Stock de varios inventarios con tres consultas agregadas en total
-   * (lotes con sus entradas/salidas, salidas sin lote e inventarios existentes),
-   * en lugar de varias consultas por cada lote. Mismas reglas que calcularStockLote.
+   * Stock de varios inventarios. Lee el saldo del kardex materializado
+   * (el costo promedio es el valor del saldo según el método de valoración).
    */
   async calcularStockInventarios(
+    idsInventario: number[],
+    fechaHasta?: Date,
+  ): Promise<Map<number, InventarioStockResult>> {
+    if (!leerKardexMaterializado()) {
+      return this.calcularStockDinamico(idsInventario, fechaHasta);
+    }
+    // fechaHasta es fin de día en hora local: su día calendario local
+    const hastaDia = fechaHasta
+      ? `${fechaHasta.getFullYear()}-${String(fechaHasta.getMonth() + 1).padStart(2, '0')}-${String(fechaHasta.getDate()).padStart(2, '0')}`
+      : undefined;
+    const saldos = await this.kardex.saldos(idsInventario, hastaDia);
+    const resultado = new Map<number, InventarioStockResult>();
+    for (const [id, saldo] of saldos) {
+      resultado.set(id, {
+        idInventario: id,
+        stockActual: saldo.cantidad,
+        costoPromedioActual: saldo.costoUnitario,
+        lotes: saldo.lotes.map((l) => ({
+          idLote: l.idLote,
+          cantidadActual: l.cantidad,
+          cantidadInicial: l.cantidadInicial,
+          costoUnitario: l.costoUnitario,
+          fechaIngreso: l.fechaIngreso,
+          numeroLote: l.numeroLote,
+        })),
+      });
+    }
+    return resultado;
+  }
+
+  /**
+   * Stock calculado desde los movimientos con tres consultas agregadas
+   * (fase 3). Se usa con KARDEX_MATERIALIZADO=false para comparar.
+   */
+  private async calcularStockDinamico(
     idsInventario: number[],
     fechaHasta?: Date,
   ): Promise<Map<number, InventarioStockResult>> {

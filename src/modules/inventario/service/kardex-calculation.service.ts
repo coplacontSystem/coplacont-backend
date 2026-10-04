@@ -9,6 +9,11 @@ import {
   MovimientoInventario,
   ValoracionService,
 } from '../valoracion/valoracion.service';
+import {
+  KardexLeido,
+  KardexMaterializadoService,
+  leerKardexMaterializado,
+} from '../valoracion/kardex-materializado.service';
 
 /**
  * Interfaz para un movimiento de Kardex calculado dinámicamente
@@ -67,8 +72,8 @@ export interface KardexResult {
 }
 
 /**
- * Kardex de un inventario. La valoración la hace el motor único
- * (`ValoracionService`), el mismo que costea las ventas al registrarlas.
+ * Kardex de un inventario. Lee el kardex materializado (o, con
+ * KARDEX_MATERIALIZADO=false, lo calcula desde cero con el mismo motor).
  */
 @Injectable()
 export class KardexCalculationService {
@@ -76,17 +81,18 @@ export class KardexCalculationService {
     @InjectRepository(Inventario)
     private readonly inventarioRepository: Repository<Inventario>,
     private readonly valoracion: ValoracionService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   /**
    * Genera el Kardex de un inventario entre dos fechas (días completos).
    * El saldo inicial es el saldo valorizado al final del día anterior a `fechaDesde`.
+   * El método de valoración es el de cada período contable.
    */
   async generarKardex(
     idInventario: number,
     fechaDesde: Date,
     fechaHasta: Date,
-    metodoValoracion: MetodoValoracion,
   ): Promise<KardexResult | null> {
     const inventario = await this.inventarioRepository.findOne({
       where: { id: idInventario },
@@ -96,44 +102,34 @@ export class KardexCalculationService {
       return null;
     }
 
-    const valorizado = (
-      await this.valoracion.valorizarInventarios(
-        [idInventario],
-        metodoValoracion,
-      )
-    ).get(Number(idInventario));
-    const movimientos = valorizado?.movimientos ?? [];
-    const lineas = valorizado?.resultado.lineas ?? [];
-
     const desde = diaDe(fechaDesde);
     const hasta = diaDe(fechaHasta);
-    let saldoInicial = { cantidad: 0, costoUnitario: 0, valorTotal: 0 };
-    let saldoFinal = saldoInicial;
-    const movimientosKardex: KardexMovement[] = [];
+    const leido = leerKardexMaterializado()
+      ? await this.kardex.leerKardex(idInventario, desde, hasta)
+      : await this.kardexDinamico(idInventario, desde, hasta);
 
-    lineas.forEach((linea, i) => {
-      const dia = diaDe(linea.fecha);
-      const saldo = {
+    let saldoFinal = {
+      cantidad: leido.saldoInicial.cantidad,
+      costoUnitario: leido.saldoInicial.costoUnitario,
+      valorTotal: leido.saldoInicial.valor,
+    };
+    const saldoInicial = saldoFinal;
+    const movimientosKardex: KardexMovement[] = [];
+    for (const { linea, movimiento } of leido.lineas) {
+      movimientosKardex.push(
+        ...this.filasKardex(
+          movimiento,
+          linea,
+          saldoFinal,
+          leido.metodo(linea.fecha),
+        ),
+      );
+      saldoFinal = {
         cantidad: linea.saldoCantidad,
         costoUnitario: linea.saldoCostoUnitario,
         valorTotal: linea.saldoValor,
       };
-      if (dia < desde) {
-        saldoInicial = saldo;
-        saldoFinal = saldo;
-        return;
-      }
-      if (dia > hasta) return;
-      movimientosKardex.push(
-        ...this.filasKardex(
-          movimientos[i],
-          linea,
-          saldoFinal,
-          metodoValoracion,
-        ),
-      );
-      saldoFinal = saldo;
-    });
+    }
 
     return {
       idInventario,
@@ -153,6 +149,39 @@ export class KardexCalculationService {
       costoUnitarioFinal: saldoFinal.costoUnitario,
       valorTotalFinal: saldoFinal.valorTotal,
     };
+  }
+
+  /** Kardex calculado desde cero (fase 4), con la misma forma que el materializado. */
+  private async kardexDinamico(
+    idInventario: number,
+    desde: string,
+    hasta: string,
+  ): Promise<KardexLeido> {
+    const valorizado = (
+      await this.valoracion.valorizarInventarios([idInventario])
+    ).get(Number(idInventario));
+    const metodo =
+      (await this.valoracion.metodosPara([idInventario])).get(
+        Number(idInventario),
+      ) ?? (() => MetodoValoracion.PROMEDIO);
+    const leido: KardexLeido = {
+      saldoInicial: { cantidad: 0, valor: 0, costoUnitario: 0 },
+      lineas: [],
+      metodo,
+    };
+    (valorizado?.resultado.lineas ?? []).forEach((linea, i) => {
+      const dia = diaDe(linea.fecha);
+      if (dia < desde) {
+        leido.saldoInicial = {
+          cantidad: linea.saldoCantidad,
+          valor: linea.saldoValor,
+          costoUnitario: linea.saldoCostoUnitario,
+        };
+      } else if (dia <= hasta) {
+        leido.lineas.push({ linea, movimiento: valorizado!.movimientos[i] });
+      }
+    });
+    return leido;
   }
 
   /**

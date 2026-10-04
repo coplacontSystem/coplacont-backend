@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 import { Persona } from '../../users/entities/persona.entity';
 import { Comprobante } from '../../comprobantes/entities/comprobante';
+import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
 
 /**
  * Entidad que representa un período contable
@@ -56,6 +57,15 @@ export class PeriodoContable {
    */
   @Column({ default: false })
   cerrado: boolean;
+
+  /**
+   * Método de valoración con que se valoriza el kardex de este período.
+   * Se fija al crear el período y solo cambia mientras no tenga movimientos;
+   * así un recálculo nunca revaloriza ejercicios anteriores con otro método.
+   * null = el de la configuración de la empresa.
+   */
+  @Column({ type: 'enum', enum: MetodoValoracion, nullable: true })
+  metodoValoracion?: MetodoValoracion | null;
 
   /**
    * Fecha en que se cerró el período

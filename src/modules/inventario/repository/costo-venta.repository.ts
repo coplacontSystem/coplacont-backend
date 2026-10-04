@@ -2,12 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { OPERACION } from 'src/common/catalogo.service';
-import { PeriodoContableService } from 'src/modules/periodos/service';
 import { diaDe } from '../valoracion/motor-valoracion';
 import {
   InventarioValorizado,
   ValoracionService,
 } from '../valoracion/valoracion.service';
+import {
+  KardexMaterializadoService,
+  leerKardexMaterializado,
+} from '../valoracion/kardex-materializado.service';
 
 export interface CostoVentaMensualData {
   mes: number;
@@ -47,12 +50,79 @@ export class CostoVentaRepository {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly valoracion: ValoracionService,
-    private readonly periodoContableService: PeriodoContableService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   /**
-   * Inventarios de la empresa (con filtros) valorizados por el motor único, con
-   * el método de valoración de la empresa: los importes son los mismos del kardex.
+   * Entradas y salidas al costo del año, agrupadas por `grupo` (mes o inventario),
+   * leídas del kardex materializado. Opcionalmente sin transferencias.
+   */
+  private async totalesMaterializados(
+    ids: number[],
+    año: number,
+    grupo: 'mes' | 'inventario',
+    sinTransferencias: boolean,
+  ): Promise<{ clave: number; tipo: string; total: number }[]> {
+    await this.kardex.asegurarAlDia(ids);
+    const filas: { clave: string; tipo: string; total: string }[] =
+      await this.dataSource.manager.query(
+        `SELECT ${grupo === 'mes' ? 'EXTRACT(MONTH FROM k.dia)' : 'k.id_inventario'} AS clave,
+                k.tipo, SUM(k.costo_total) AS total
+           FROM kardex_linea k
+           LEFT JOIN movimiento_detalles md ON md.id = k.id_movimiento_detalle
+           LEFT JOIN movimientos m ON m.id = md.id_movimiento
+           LEFT JOIN comprobante c ON c."idComprobante" = m.id_comprobante
+           LEFT JOIN tabla_detalle t ON t."idTablaDetalle" = c.id_tipo_operacion
+          WHERE k.id_inventario = ANY($1)
+            AND k.dia BETWEEN make_date($2, 1, 1) AND make_date($2, 12, 31)
+            AND (NOT $3 OR COALESCE(t.codigo, m."codigoTabla12", '') <> ALL($4))
+          GROUP BY 1, 2`,
+        [
+          ids,
+          año,
+          sinTransferencias,
+          [OPERACION.TRANSFERENCIA_INGRESO, OPERACION.TRANSFERENCIA_SALIDA],
+        ],
+      );
+    return filas.map((f) => ({
+      clave: Number(f.clave),
+      tipo: f.tipo,
+      total: Number(f.total) || 0,
+    }));
+  }
+
+  /**
+   * Valor del inventario al cierre de cada mes indicado (saldo de la última
+   * línea del kardex hasta ese día), por inventario.
+   */
+  private async valoresAlCierre(
+    ids: number[],
+    año: number,
+    meses: number[],
+  ): Promise<{ mes: number; idInventario: number; valor: number }[]> {
+    await this.kardex.asegurarAlDia(ids);
+    const filas: { mes: number; id: string; valor: string | null }[] =
+      await this.dataSource.manager.query(
+        `SELECT mes, inv.id, u.saldo_valor AS valor
+           FROM unnest($3::int[]) AS mes
+          CROSS JOIN unnest($1::bigint[]) AS inv(id)
+           LEFT JOIN LATERAL (
+             SELECT k.saldo_valor FROM kardex_linea k
+              WHERE k.id_inventario = inv.id
+                AND k.dia <= (make_date($2, mes, 1) + interval '1 month - 1 day')::date
+              ORDER BY k.dia DESC, k.orden DESC LIMIT 1) u ON true`,
+        [ids, año, meses],
+      );
+    return filas.map((f) => ({
+      mes: Number(f.mes),
+      idInventario: Number(f.id),
+      valor: Number(f.valor) || 0,
+    }));
+  }
+
+  /**
+   * Inventarios de la empresa (con filtros) valorizados desde cero por el motor
+   * único (KARDEX_MATERIALIZADO=false): los importes son los mismos del kardex.
    */
   private async valorizados(filtros: CostoVentaFiltros): Promise<{
     inventarios: Awaited<
@@ -61,12 +131,8 @@ export class CostoVentaRepository {
     valorizados: Map<number, InventarioValorizado>;
   }> {
     const inventarios = await this.getInventariosInfo(filtros);
-    const metodo = (
-      await this.periodoContableService.obtenerConfiguracion(filtros.personaId)
-    ).metodoCalculoCosto;
     const valorizados = await this.valoracion.valorizarInventarios(
       inventarios.map((i) => i.idInventario),
-      metodo,
     );
     return { inventarios, valorizados };
   }
@@ -96,8 +162,6 @@ export class CostoVentaRepository {
   async getCostoVentaAnual(
     filtros: CostoVentaFiltros,
   ): Promise<CostoVentaMensualData[]> {
-    const { valorizados } = await this.valorizados(filtros);
-    const año = String(filtros.año);
     const resultado: CostoVentaMensualData[] = Array.from(
       { length: 12 },
       (_, i) => ({
@@ -107,6 +171,34 @@ export class CostoVentaRepository {
         inventarioFinal: 0,
       }),
     );
+
+    if (leerKardexMaterializado()) {
+      const ids = (await this.getInventariosInfo(filtros)).map(
+        (i) => i.idInventario,
+      );
+      if (ids.length === 0) return resultado;
+      for (const t of await this.totalesMaterializados(
+        ids,
+        filtros.año,
+        'mes',
+        !filtros.idAlmacen,
+      )) {
+        const mes = resultado[t.clave - 1];
+        if (t.tipo === 'ENTRADA') mes.comprasTotales += t.total;
+        else mes.salidasTotales += t.total;
+      }
+      for (const v of await this.valoresAlCierre(
+        ids,
+        filtros.año,
+        resultado.map((m) => m.mes),
+      )) {
+        resultado[v.mes - 1].inventarioFinal += v.valor;
+      }
+      return resultado;
+    }
+
+    const { valorizados } = await this.valorizados(filtros);
+    const año = String(filtros.año);
 
     for (const inv of valorizados.values()) {
       inv.resultado.lineas.forEach((linea, i) => {
@@ -218,6 +310,34 @@ export class CostoVentaRepository {
   async getCostoVentaPorInventario(
     filtros: CostoVentaPorInventarioFiltros,
   ): Promise<CostoVentaPorInventarioData[]> {
+    if (leerKardexMaterializado()) {
+      const inventarios = await this.getInventariosInfo(filtros);
+      const ids = inventarios.map((i) => i.idInventario);
+      if (ids.length === 0) return [];
+      const totales = await this.totalesMaterializados(
+        ids,
+        filtros.año,
+        'inventario',
+        false,
+      );
+      const finales = new Map(
+        (await this.valoresAlCierre(ids, filtros.año, [12])).map((v) => [
+          v.idInventario,
+          v.valor,
+        ]),
+      );
+      const total = (id: number, tipo: string) =>
+        totales.find((t) => t.clave === id && t.tipo === tipo)?.total ?? 0;
+      return inventarios.map((info) => ({
+        idInventario: info.idInventario,
+        nombreProducto: info.nombreProducto,
+        nombreAlmacen: info.nombreAlmacen,
+        entradas: total(info.idInventario, 'ENTRADA'),
+        salidas: total(info.idInventario, 'SALIDA'),
+        inventarioFinal: finales.get(info.idInventario) ?? 0,
+      }));
+    }
+
     const { inventarios, valorizados } = await this.valorizados(filtros);
     const año = String(filtros.año);
 
