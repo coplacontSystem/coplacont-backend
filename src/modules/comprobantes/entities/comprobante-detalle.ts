@@ -4,10 +4,14 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  Index,
 } from 'typeorm';
 import { Comprobante } from './comprobante';
 import { Inventario } from '../../inventario/entities/inventario.entity';
 
+// Índices para las consultas de stock, kardex y reportes
+@Index('IDX_comp_det_comprobante', ['comprobante'])
+@Index('IDX_comp_det_inventario', ['inventario'])
 @Entity({ name: 'comprobante_detalle' })
 export class ComprobanteDetalle {
   @PrimaryGeneratedColumn()

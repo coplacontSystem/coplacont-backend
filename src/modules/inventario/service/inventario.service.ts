@@ -38,7 +38,7 @@ export class InventarioService {
     private readonly inventarioLoteService: InventarioLoteService,
     private readonly periodoContableService: PeriodoContableService,
     private readonly stockCacheService: StockCacheService,
-  ) { }
+  ) {}
 
   private readonly logger = new Logger(InventarioService.name);
 
@@ -170,26 +170,28 @@ export class InventarioService {
   async findAll(personaId?: number): Promise<ResponseInventarioDto[]> {
     const inventarios = await this.inventarioRepository.findAll(personaId);
 
-    const inventariosWithStock = await Promise.all(
-      inventarios.map(async (inventario) => {
-        this.logger.log(
-          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
-        );
-        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
-        const stockResult =
-          await this.stockCalculationService.calcularStockInventario(
-            inventario.id,
-            fechaHasta,
-          );
-        const stockActual = stockResult?.stockActual ?? 0;
-        this.logger.log(
-          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
-        );
-        return this.mapToResponseDto(inventario, stockActual);
-      }),
-    );
+    return this.conStock(inventarios, personaId);
+  }
 
-    return inventariosWithStock;
+  /**
+   * Agrega el stock actual a una lista de inventarios con un solo cálculo
+   * agregado (antes era un cálculo, y varias consultas por lote, por inventario).
+   */
+  private async conStock(
+    inventarios: Inventario[],
+    personaId?: number,
+  ): Promise<ResponseInventarioDto[]> {
+    const fechaHasta = await this.getFechaHastaParaPersona(personaId);
+    const stock = await this.stockCalculationService.calcularStockInventarios(
+      inventarios.map((i) => i.id),
+      fechaHasta,
+    );
+    return inventarios.map((inventario) =>
+      this.mapToResponseDto(
+        inventario,
+        stock.get(Number(inventario.id))?.stockActual ?? 0,
+      ),
+    );
   }
 
   /**
@@ -204,18 +206,12 @@ export class InventarioService {
       throw new NotFoundException(`Inventario con ID ${id} no encontrado`);
     }
 
-    this.logger.log(
-      `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
-    );
     const stockResult =
       await this.stockCalculationService.calcularStockInventario(
         inventario.id,
         new Date(),
       );
     const stockActual = stockResult?.stockActual;
-    this.logger.log(
-      `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual ?? 0} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
-    );
     return this.mapToResponseDto(inventario, stockActual);
   }
 
@@ -228,25 +224,7 @@ export class InventarioService {
       idAlmacen,
       personaId,
     );
-    const inventariosWithStock = await Promise.all(
-      inventarios.map(async (inventario) => {
-        this.logger.log(
-          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
-        );
-        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
-        const stockResult =
-          await this.stockCalculationService.calcularStockInventario(
-            inventario.id,
-            fechaHasta,
-          );
-        const stockActual = stockResult?.stockActual ?? 0;
-        this.logger.log(
-          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
-        );
-        return this.mapToResponseDto(inventario, stockActual);
-      }),
-    );
-    return inventariosWithStock;
+    return this.conStock(inventarios, personaId);
   }
 
   async findByProducto(
@@ -258,25 +236,7 @@ export class InventarioService {
       idProducto,
       personaId,
     );
-    const inventariosWithStock = await Promise.all(
-      inventarios.map(async (inventario) => {
-        this.logger.log(
-          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
-        );
-        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
-        const stockResult =
-          await this.stockCalculationService.calcularStockInventario(
-            inventario.id,
-            fechaHasta,
-          );
-        const stockActual = stockResult?.stockActual ?? 0;
-        this.logger.log(
-          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
-        );
-        return this.mapToResponseDto(inventario, stockActual);
-      }),
-    );
-    return inventariosWithStock;
+    return this.conStock(inventarios, personaId);
   }
 
   /**
@@ -325,10 +285,10 @@ export class InventarioService {
       lote,
       movimiento: movimiento
         ? {
-          id: movimiento.id,
-          fecha: movimiento.fecha,
-          numeroDocumento: movimiento.numeroDocumento,
-        }
+            id: movimiento.id,
+            fecha: movimiento.fecha,
+            numeroDocumento: movimiento.numeroDocumento,
+          }
         : null,
       detalle: { id: detalle.id, cantidad: Number(detalle.cantidad) },
     };
@@ -414,10 +374,10 @@ export class InventarioService {
       lote: updatedLote,
       movimiento: movimiento
         ? {
-          id: movimiento.id,
-          fecha: movimiento.fecha,
-          numeroDocumento: movimiento.numeroDocumento,
-        }
+            id: movimiento.id,
+            fecha: movimiento.fecha,
+            numeroDocumento: movimiento.numeroDocumento,
+          }
         : null,
       detalle: { id: detalle.id, cantidad: Number(detalle.cantidad) },
     };
@@ -552,10 +512,11 @@ export class InventarioService {
     let sinStock = 0;
     let valorTotal = 0;
 
+    const stock = await this.stockCalculationService.calcularStockInventarios(
+      inventarios.map((i) => i.id),
+    );
     for (const inv of inventarios) {
-      const stockResult =
-        await this.stockCalculationService.calcularStockInventario(inv.id);
-      const stockActual = stockResult?.stockActual || 0;
+      const stockActual = stock.get(Number(inv.id))?.stockActual || 0;
 
       if (stockActual <= inv.producto.stockMinimo) stockBajo++;
       if (stockActual === 0) sinStock++;

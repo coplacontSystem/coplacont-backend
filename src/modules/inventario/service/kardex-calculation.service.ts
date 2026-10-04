@@ -34,6 +34,12 @@ export interface KardexMovement {
 /**
  * Interfaz para detalles de salida calculados dinámicamente
  */
+/** Lotes disponibles durante el cálculo FIFO de un kardex (estado de una sola petición). */
+type LotesTemporales = Map<
+  number,
+  { cantidadDisponible: number; costoUnitario: number; fechaIngreso: Date }
+>;
+
 export interface DetalleSalidaCalculado {
   idLote: number;
   cantidad: number;
@@ -73,12 +79,6 @@ export interface KardexResult {
  */
 @Injectable()
 export class KardexCalculationService {
-  // Estado temporal para el cálculo FIFO durante el procesamiento del Kardex
-  private lotesDisponiblesTemporales: Map<
-    number,
-    { cantidadDisponible: number; costoUnitario: number; fechaIngreso: Date }
-  > = new Map();
-
   constructor(
     @InjectRepository(Inventario)
     private readonly inventarioRepository: Repository<Inventario>,
@@ -180,6 +180,7 @@ export class KardexCalculationService {
       .leftJoin('m.comprobante', 'c')
       .leftJoin('c.tipoOperacion', 'to')
       .leftJoin('c.tipoComprobante', 'tc')
+      .leftJoin(InventarioLote, 'lote', 'lote.id = md.idLote')
       .where('md.idInventario = :idInventario', { idInventario })
       .andWhere('m.fecha >= :fechaDesde', { fechaDesde })
       .andWhere('m.fecha <= :fechaHasta', { fechaHasta })
@@ -188,6 +189,7 @@ export class KardexCalculationService {
         'md.id as idmovimientodetalle',
         'md.cantidad as md_cantidad',
         'md.idLote as md_id_lote',
+        'lote.costoUnitario as lote_costo_unitario',
         'md.idInventario as md_id_inventario',
         'm.id as idmovimiento',
         'm.tipo as tipomovimiento',
@@ -261,10 +263,12 @@ export class KardexCalculationService {
     const movimientosKardex: KardexMovement[] = [];
     let saldoActual = { ...saldoInicial };
 
-    // Inicializar estado temporal de lotes para FIFO
-    if (metodoValoracion === MetodoValoracion.FIFO) {
-      await this.inicializarLotesTemporales(idInventario, fechaDesde);
-    }
+    // Estado de lotes propio de esta petición (antes era un atributo del
+    // servicio singleton y dos kardex simultáneos se pisaban)
+    const lotes: LotesTemporales =
+      metodoValoracion === MetodoValoracion.FIFO
+        ? await this.inicializarLotesTemporales(idInventario, fechaDesde)
+        : new Map();
 
     for (let i = 0; i < movimientos.length; i++) {
       const mov = movimientos[i];
@@ -277,11 +281,12 @@ export class KardexCalculationService {
       let movimientoKardex: KardexMovement;
 
       if (esEntrada) {
-        movimientoKardex = await this.procesarEntrada(mov, saldoActual);
+        movimientoKardex = this.procesarEntrada(mov, saldoActual);
 
         // Actualizar lotes temporales para FIFO en entradas usando datos del movimiento calculado
         if (metodoValoracion === MetodoValoracion.FIFO && mov.md_id_lote) {
           this.actualizarLoteTemporalEntrada(
+            lotes,
             Number(mov.md_id_lote),
             Number(movimientoKardex.cantidad),
             Number(movimientoKardex.costoUnitario),
@@ -293,7 +298,7 @@ export class KardexCalculationService {
           mov,
           saldoActual,
           metodoValoracion,
-          idInventario,
+          lotes,
         );
 
         // Manejar el caso en que procesarSalida devuelve un array (FIFO con múltiples lotes)
@@ -327,29 +332,24 @@ export class KardexCalculationService {
       };
     }
 
-    // Limpiar estado temporal
-    this.lotesDisponiblesTemporales.clear();
-
     return movimientosKardex;
   }
 
   /**
    * Procesa un movimiento de entrada (compra)
    */
-  private async procesarEntrada(
+  private procesarEntrada(
     mov: any,
     saldoAnterior: {
       cantidad: number;
       costoUnitario: number;
       valorTotal: number;
     },
-  ): Promise<KardexMovement> {
+  ): KardexMovement {
     const cantidad = Number(mov.md_cantidad);
 
-    // Para entradas, obtener el costo del lote
-    const costoUnitario = await this.obtenerCostoUnitarioEntrada(
-      mov.md_id_lote,
-    );
+    // Costo del lote de la entrada (viene en la misma consulta del kardex)
+    const costoUnitario = Number(mov.lote_costo_unitario) || 0;
 
     const costoTotal = cantidad * costoUnitario;
 
@@ -394,7 +394,7 @@ export class KardexCalculationService {
       valorTotal: number;
     },
     metodoValoracion: MetodoValoracion,
-    idInventario: number,
+    lotes: LotesTemporales,
   ): KardexMovement | KardexMovement[] {
     const cantidad = Number(mov.md_cantidad);
 
@@ -439,7 +439,7 @@ export class KardexCalculationService {
     // Para método FIFO, crear un movimiento por cada lote consumido
     else {
       // Calcular los lotes a consumir usando FIFO
-      const resultadoFIFO = this.calcularCostoFIFO(idInventario, cantidad);
+      const resultadoFIFO = this.calcularCostoFIFO(lotes, cantidad);
 
       const movimientosPorLote: KardexMovement[] = [];
       let saldoActualizado = { ...saldoAnterior };
@@ -510,31 +510,15 @@ export class KardexCalculationService {
   }
 
   /**
-   * Obtiene el costo unitario de una entrada desde el lote
-   */
-  private async obtenerCostoUnitarioEntrada(idLote: number): Promise<number> {
-    if (!idLote) {
-      return 0;
-    }
-
-    const lote = await this.loteRepository.findOne({
-      where: { id: idLote },
-      select: ['costoUnitario'],
-    });
-
-    return lote ? Number(lote.costoUnitario) : 0;
-  }
-
-  /**
    * Inicializa el estado temporal de lotes para el cálculo FIFO
    */
   private async inicializarLotesTemporales(
     idInventario: number,
     fechaInicio: Date,
-  ): Promise<void> {
-    this.lotesDisponiblesTemporales.clear();
+  ): Promise<LotesTemporales> {
+    const lotes: LotesTemporales = new Map();
 
-    // Obtener lotes disponibles al inicio del período
+    // Lotes disponibles al inicio del período
     const fechaEstadoInicial = new Date(fechaInicio);
     fechaEstadoInicial.setDate(fechaEstadoInicial.getDate() - 1);
     fechaEstadoInicial.setHours(23, 59, 59, 999);
@@ -544,33 +528,34 @@ export class KardexCalculationService {
         fechaEstadoInicial,
       );
 
-    // Cargar en el estado temporal
     for (const lote of lotesDisponibles) {
-      this.lotesDisponiblesTemporales.set(lote.idLote, {
+      lotes.set(lote.idLote, {
         cantidadDisponible: lote.cantidadDisponible,
         costoUnitario: lote.costoUnitario,
         fechaIngreso: lote.fechaIngreso,
       });
     }
+    return lotes;
   }
 
   /**
    * Actualiza el estado temporal cuando hay una entrada (nuevo lote)
    */
   private actualizarLoteTemporalEntrada(
+    lotes: LotesTemporales,
     idLote: number,
     cantidad: number,
     costoUnitario: number,
     fechaIngreso: Date,
   ): void {
-    const loteExistente = this.lotesDisponiblesTemporales.get(idLote);
+    const loteExistente = lotes.get(idLote);
 
     if (loteExistente) {
       // Actualizar cantidad del lote existente
       loteExistente.cantidadDisponible += cantidad;
     } else {
       // Agregar nuevo lote
-      this.lotesDisponiblesTemporales.set(idLote, {
+      lotes.set(idLote, {
         cantidadDisponible: cantidad,
         costoUnitario: costoUnitario,
         fechaIngreso: fechaIngreso,
@@ -582,16 +567,14 @@ export class KardexCalculationService {
    * Calcula el costo FIFO para una salida específica usando el estado temporal
    */
   private calcularCostoFIFO(
-    idInventario: number,
+    lotes: LotesTemporales,
     cantidadSalida: number,
   ): {
     costoUnitarioPromedio: number;
     detallesSalida: DetalleSalidaCalculado[];
   } {
     // Usar lotes temporales en lugar de consultar la base de datos
-    const lotesDisponibles = Array.from(
-      this.lotesDisponiblesTemporales.entries(),
-    )
+    const lotesDisponibles = Array.from(lotes.entries())
       .filter((entry) => entry[1].cantidadDisponible > 0)
       .map(([idLote, lote]) => ({
         idLote,
@@ -631,7 +614,7 @@ export class KardexCalculationService {
       costoTotalSalida += costoDelLote;
 
       // Actualizar el estado temporal del lote
-      const loteTemp = this.lotesDisponiblesTemporales.get(lote.idLote);
+      const loteTemp = lotes.get(lote.idLote);
       if (loteTemp) {
         loteTemp.cantidadDisponible -= cantidadDelLote;
       }

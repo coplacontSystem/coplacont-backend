@@ -7,6 +7,7 @@ import {
   ManyToOne,
   OneToMany,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { Movimiento } from './movimiento.entity';
 import { Inventario } from '../../inventario/entities/inventario.entity';
@@ -15,6 +16,10 @@ import { DetalleSalida } from './detalle-salida.entity';
 /**
  * Entidad para detalles de movimientos de inventario
  */
+// Índices para las consultas de stock, kardex y reportes
+@Index('IDX_mov_det_movimiento', ['idMovimiento'])
+@Index('IDX_mov_det_inventario', ['idInventario'])
+@Index('IDX_mov_det_lote', ['idLote'])
 @Entity('movimiento_detalles')
 export class MovimientoDetalle {
   @PrimaryGeneratedColumn()

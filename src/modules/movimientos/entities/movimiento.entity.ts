@@ -7,6 +7,7 @@ import {
   ManyToOne,
   OneToMany,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { TipoMovimiento } from '../enum/tipo-movimiento.enum';
 import { EstadoMovimiento } from '../enum/estado-movimiento.enum';
@@ -16,6 +17,9 @@ import { MovimientoDetalle } from './movimiento-detalle.entity';
 /**
  * Entidad para movimientos de inventario
  */
+// Índices para las consultas de stock, kardex y reportes
+@Index('IDX_movimientos_comprobante', ['idComprobante'])
+@Index('IDX_movimientos_estado_fecha', ['estado', 'fecha'])
 @Entity('movimientos')
 export class Movimiento {
   @PrimaryGeneratedColumn()

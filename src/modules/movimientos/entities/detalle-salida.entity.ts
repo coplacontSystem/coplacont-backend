@@ -6,12 +6,16 @@ import {
   UpdateDateColumn,
   ManyToOne,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { MovimientoDetalle } from './movimiento-detalle.entity';
 
 /**
  * Entidad para detalles específicos de salidas de inventario
  */
+// Índices para las consultas de stock, kardex y reportes
+@Index('IDX_det_salida_mov_det', ['idMovimientoDetalle'])
+@Index('IDX_det_salida_lote', ['idLote'])
 @Entity('detalle_salidas')
 export class DetalleSalida {
   @PrimaryGeneratedColumn()
