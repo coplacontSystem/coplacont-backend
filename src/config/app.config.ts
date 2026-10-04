@@ -25,6 +25,8 @@ export function configureApp(app: INestApplication): void {
     origin: origenesPermitidos(),
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+    // El frontend lee el nombre de los archivos exportados
+    exposedHeaders: ['Content-Disposition'],
     credentials: true,
   });
 
