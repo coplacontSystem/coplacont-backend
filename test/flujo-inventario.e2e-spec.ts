@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import * as ExcelJS from 'exceljs';
 import { createTestApp } from './support/app';
 import { crearEmpresa, Empresa, esperarStatus } from './support/api';
 import {
@@ -97,6 +98,39 @@ describe('Flujo de inventario (e2e)', () => {
       expect(Number(marzo.comprasTotales)).toBeCloseTo(300, 2);
       expect(Number(marzo.salidasTotales)).toBeCloseTo(200, 2);
       expect(Number(marzo.inventarioFinal)).toBeCloseTo(100, 2);
+    });
+
+    it('exporta el Estado de Costo de Ventas con los mismos números', async () => {
+      const inventario = await fifo.api.get(`/api/inventario/${inv}`);
+      const idProducto = inventario.body.producto.id;
+      const res = await fifo.api.descargar(
+        `/api/reportes/costo-ventas?formato=xlsx&año=2026&idProducto=${idProducto}`,
+      );
+      esperarStatus(res, 200);
+      expect(res.headers['content-disposition']).toMatch(
+        /filename="estado_costo_ventas_.*_2026\.xlsx"/,
+      );
+      const libro = new ExcelJS.Workbook();
+      await libro.xlsx.load(res.body as ExcelJS.Buffer);
+      const filas: unknown[][] = [];
+      libro.worksheets[0].eachRow((f) =>
+        filas.push((f.values as unknown[]).slice(1)),
+      );
+      expect(filas).toContainEqual(['Marzo', 300, 200, 100]);
+      expect(filas).toContainEqual(['Total anual', 300, 200, 100]);
+
+      const csv = await fifo.api.get(
+        `/api/reportes/costo-ventas-inventario?formato=csv&año=2026&idProducto=${idProducto}`,
+      );
+      esperarStatus(csv, 200);
+      expect(csv.text).toMatch(/;300\.00;200\.00;100\.00/);
+    });
+
+    it('no exporta con un almacén de otra empresa', async () => {
+      const res = await promedio.api.get(
+        `/api/reportes/costo-ventas?formato=pdf&año=2026&idAlmacen=${escFifo.idAlmacen}`,
+      );
+      expect(res.status).toBe(404);
     });
 
     it('rechaza una venta mayor al stock disponible', async () => {

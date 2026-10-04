@@ -33,6 +33,17 @@ export class Api {
   delete(url: string) {
     return this.auth(request(this.app.getHttpServer()).delete(url));
   }
+
+  /** GET de un archivo: `body` es el Buffer con el contenido. */
+  descargar(url: string) {
+    return this.get(url)
+      .buffer(true)
+      .parse((res, callback) => {
+        const partes: Buffer[] = [];
+        res.on('data', (p: Buffer) => partes.push(p));
+        res.on('end', () => callback(null, Buffer.concat(partes)));
+      });
+  }
 }
 
 /** Devuelve el id de una respuesta, venga plana o envuelta en `data`. */

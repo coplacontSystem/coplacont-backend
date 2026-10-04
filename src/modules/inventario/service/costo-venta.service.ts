@@ -172,29 +172,6 @@ export class CostoVentaService {
   }
 
   /**
-   * Exporta el reporte en formato JSON (puede extenderse para otros formatos)
-   */
-  async exportCostoVentaReport(
-    request: CostoVentaRequestDto,
-    personaId: number,
-    formato: 'json' | 'excel' = 'json',
-  ): Promise<CostoVentaResponseDto> {
-    const reporte = await this.generateCostoVentaReport(request, personaId);
-
-    switch (formato) {
-      case 'json':
-        return reporte;
-      case 'excel':
-        // TODO: Implementar exportación a Excel
-        throw new Error('Exportación a Excel no implementada aún');
-      default:
-        throw new Error(
-          `Formato de exportación '${String(formato)}' no soportado`,
-        );
-    }
-  }
-
-  /**
    * Genera el reporte anual de Estado de Costo de Venta por inventario individual
    */
   async generateCostoVentaPorInventarioReport(
@@ -308,31 +285,5 @@ export class CostoVentaService {
       totalInventarioFinalAnual: totalInventarioFinalAnual.toFixed(2),
       cantidadInventarios: datosInventario.length,
     };
-  }
-
-  /**
-   * Exporta el reporte por inventario en formato JSON (puede extenderse para otros formatos)
-   */
-  async exportCostoVentaPorInventarioReport(
-    request: CostoVentaPorInventarioRequestDto,
-    personaId: number,
-    formato: 'json' | 'excel' = 'json',
-  ): Promise<CostoVentaPorInventarioResponseDto> {
-    const reporte = await this.generateCostoVentaPorInventarioReport(
-      request,
-      personaId,
-    );
-
-    switch (formato) {
-      case 'json':
-        return reporte;
-      case 'excel':
-        // TODO: Implementar exportación a Excel
-        throw new Error('Exportación a Excel no implementada aún');
-      default:
-        throw new Error(
-          `Formato de exportación '${String(formato)}' no soportado`,
-        );
-    }
   }
 }

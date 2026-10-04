@@ -31,6 +31,8 @@ import { CostoVentaController } from './controller/costo-venta.controller';
 import { ProductosModule } from '../productos/productos.module';
 import { UserModule } from '../users/user.module';
 import { PeriodosModule } from '../periodos/periodos.module';
+import { ReportesModule } from '../reportes/reportes.module';
+import { CostoVentaReportes } from './reportes/costo-venta.reportes';
 
 @Module({
   imports: [
@@ -49,6 +51,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     ProductosModule,
     UserModule,
     PeriodosModule,
+    ReportesModule,
   ],
   controllers: [
     InventarioController,
@@ -70,6 +73,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     CostoVentaRepository,
     ValoracionService,
     KardexMaterializadoService,
+    CostoVentaReportes,
   ],
   exports: [
     InventarioService,
