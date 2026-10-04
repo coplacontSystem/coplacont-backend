@@ -1,3 +1,4 @@
+import { listar, Pagina, PaginacionDto } from 'src/common/paginacion';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Repository, DataSource, Not, In, EntityManager } from 'typeorm';
 import { Comprobante } from '../entities/comprobante';
@@ -381,36 +382,44 @@ export class ComprobanteService implements OnModuleInit {
    * @param personaId ID de la empresa (Persona) del usuario autenticado
    * @returns Lista de comprobantes de la empresa
    */
-  async findAll(personaId: number): Promise<ResponseComprobanteDto[]> {
-    const comprobantes = await this.comprobanteRepository.find({
-      where: {
-        persona: { id: personaId },
-        // Compras, ventas y transferencias tienen sus propios listados
-        tipoOperacion: {
-          idTablaDetalle: Not(
-            In([
-              await this.catalogo.operacion(OPERACION.VENTA),
-              await this.catalogo.operacion(OPERACION.COMPRA),
-              await this.catalogo.operacion(OPERACION.TRANSFERENCIA_INGRESO),
-              await this.catalogo.operacion(OPERACION.TRANSFERENCIA_SALIDA),
-            ]),
-          ),
+  async findAll(
+    personaId: number,
+    paginacion?: PaginacionDto,
+  ): Promise<ResponseComprobanteDto[] | Pagina<ResponseComprobanteDto>> {
+    return listar(
+      this.comprobanteRepository,
+      {
+        where: {
+          persona: { id: personaId },
+          // Compras, ventas y transferencias tienen sus propios listados
+          tipoOperacion: {
+            idTablaDetalle: Not(
+              In([
+                await this.catalogo.operacion(OPERACION.VENTA),
+                await this.catalogo.operacion(OPERACION.COMPRA),
+                await this.catalogo.operacion(OPERACION.TRANSFERENCIA_INGRESO),
+                await this.catalogo.operacion(OPERACION.TRANSFERENCIA_SALIDA),
+              ]),
+            ),
+          },
         },
+        relations: [
+          'totales',
+          'persona',
+          'entidad',
+          'tipoOperacion',
+          'tipoComprobante',
+          'detalles',
+          'detalles.inventario',
+        ],
+        order: { fechaEmision: 'DESC', idComprobante: 'DESC' },
       },
-      relations: [
-        'totales',
-        'persona',
-        'entidad',
-        'tipoOperacion',
-        'tipoComprobante',
-        'detalles',
-        'detalles.inventario',
-      ],
-      order: { fechaEmision: 'DESC', idComprobante: 'DESC' },
-    });
-    return plainToInstance(ResponseComprobanteDto, comprobantes, {
-      excludeExtraneousValues: true,
-    });
+      paginacion,
+      (filas) =>
+        plainToInstance(ResponseComprobanteDto, filas, {
+          excludeExtraneousValues: true,
+        }),
+    );
   }
 
   existDetails(createComprobanteDto: CreateComprobanteDto): boolean {

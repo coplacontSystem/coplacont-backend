@@ -18,12 +18,10 @@ import { InventarioLoteService } from './service/inventario-lote.service';
 import { LoteService } from './service/lote.service';
 import { LoteCreationService } from './service/lote-creation.service';
 import { StockCalculationService } from './service/stock-calculation.service';
-import { StockCacheService } from './service/stock-cache.service';
 import { KardexCalculationService } from './service/kardex-calculation.service';
 import { KardexService } from './service/kardex.service';
 import { CostoVentaService } from './service/costo-venta.service';
 import { InventarioRepository } from './repository';
-import { KardexRepository } from './repository/kardex.repository';
 import { CostoVentaRepository } from './repository/costo-venta.repository';
 import { InventarioController } from './controller/inventario.controller';
 import { InventarioLoteController } from './controller/inventario-lote.controller';
@@ -65,12 +63,10 @@ import { PeriodosModule } from '../periodos/periodos.module';
     LoteService,
     LoteCreationService,
     StockCalculationService,
-    StockCacheService,
     KardexCalculationService,
     KardexService,
     CostoVentaService,
     InventarioRepository,
-    KardexRepository,
     CostoVentaRepository,
     ValoracionService,
     KardexMaterializadoService,
@@ -81,7 +77,6 @@ import { PeriodosModule } from '../periodos/periodos.module';
     LoteService,
     LoteCreationService,
     StockCalculationService,
-    StockCacheService,
     KardexCalculationService,
     KardexService,
     CostoVentaService,

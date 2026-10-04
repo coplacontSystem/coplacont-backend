@@ -250,6 +250,33 @@ describe('Flujo de inventario (e2e)', () => {
       expect(res.body.length).toBeGreaterThan(0);
     });
 
+    it('pagina los listados solo si se pide', async () => {
+      const completo = await fifo.api.get('/api/compras');
+      expect(Array.isArray(completo.body)).toBe(true);
+      const total = completo.body.length;
+      expect(total).toBeGreaterThan(2);
+
+      const p1 = await fifo.api.get('/api/compras?pagina=1&limite=2');
+      esperarStatus(p1, 200);
+      expect(p1.body).toMatchObject({
+        total,
+        pagina: 1,
+        limite: 2,
+        totalPaginas: Math.ceil(total / 2),
+      });
+      expect(p1.body.datos).toHaveLength(2);
+      const p2 = await fifo.api.get('/api/compras?pagina=2&limite=2');
+      const ids = [...p1.body.datos, ...p2.body.datos].map(
+        (c: any) => c.idComprobante,
+      );
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids).toEqual(
+        completo.body.slice(0, ids.length).map((c: any) => c.idComprobante),
+      );
+
+      expect((await fifo.api.get('/api/ventas?limite=500')).status).toBe(400);
+    });
+
     it('el listado de ventas incluye las ventas registradas', async () => {
       const res = await fifo.api.get('/api/ventas');
       esperarStatus(res, 200);

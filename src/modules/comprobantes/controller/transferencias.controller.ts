@@ -1,4 +1,7 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Pagina, PaginacionDto } from 'src/common/paginacion';
+import { empresaDe } from 'src/common/empresa';
+import { ResponseComprobanteDto } from '../dto/comprobante/response-comprobante.dto';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -103,10 +106,8 @@ export class TransferenciasController {
   })
   async findAll(
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<
-    import('../dto/comprobante/response-comprobante.dto').ResponseComprobanteDto[]
-  > {
-    const personaId = user.personaId as number;
-    return this.transferenciasService.findAll(personaId);
+    @Query() paginacion: PaginacionDto,
+  ): Promise<ResponseComprobanteDto[] | Pagina<ResponseComprobanteDto>> {
+    return this.transferenciasService.findAll(empresaDe(user), paginacion);
   }
 }

@@ -1,3 +1,4 @@
+import { listar, Pagina, PaginacionDto } from 'src/common/paginacion';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { runInTransaction } from 'typeorm-transactional';
 import { TipoMovimiento } from 'src/modules/movimientos/enum/tipo-movimiento.enum';
@@ -457,31 +458,39 @@ export class TransferenciasService {
     return result;
   }
 
-  async findAll(personaId: number): Promise<ResponseComprobanteDto[]> {
-    const comprobantes = await this.comprobanteRepository.find({
-      where: {
-        persona: { id: personaId },
-        // Una fila por transferencia: el comprobante de ingreso al almacén destino
-        tipoOperacion: {
-          idTablaDetalle: await this.catalogo.operacion(
-            OPERACION.TRANSFERENCIA_INGRESO,
-          ),
+  async findAll(
+    personaId: number,
+    paginacion?: PaginacionDto,
+  ): Promise<ResponseComprobanteDto[] | Pagina<ResponseComprobanteDto>> {
+    return listar(
+      this.comprobanteRepository,
+      {
+        where: {
+          persona: { id: personaId },
+          // Una fila por transferencia: el comprobante de ingreso al almacén destino
+          tipoOperacion: {
+            idTablaDetalle: await this.catalogo.operacion(
+              OPERACION.TRANSFERENCIA_INGRESO,
+            ),
+          },
         },
+        relations: [
+          'totales',
+          'persona',
+          'entidad',
+          'tipoOperacion',
+          'tipoComprobante',
+          'detalles',
+          'detalles.inventario',
+          'detalles.inventario.producto',
+        ],
+        order: { fechaRegistro: 'DESC', idComprobante: 'DESC' },
       },
-      relations: [
-        'totales',
-        'persona',
-        'entidad',
-        'tipoOperacion',
-        'tipoComprobante',
-        'detalles',
-        'detalles.inventario',
-        'detalles.inventario.producto',
-      ],
-      order: { fechaRegistro: 'DESC' },
-    });
-    return plainToInstance(ResponseComprobanteDto, comprobantes, {
-      excludeExtraneousValues: true,
-    });
+      paginacion,
+      (filas) =>
+        plainToInstance(ResponseComprobanteDto, filas, {
+          excludeExtraneousValues: true,
+        }),
+    );
   }
 }

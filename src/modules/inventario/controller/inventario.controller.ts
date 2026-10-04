@@ -83,10 +83,8 @@ export class InventarioController {
       [createInventarioDto.idProducto],
       personaId,
     );
-    const inventario = await this.inventarioService.create(
-      createInventarioDto,
-      personaId,
-    );
+    // La pertenencia de almacén y producto ya se verificó arriba
+    const inventario = await this.inventarioService.create(createInventarioDto);
     return plainToClass(ResponseInventarioDto, inventario);
   }
 
