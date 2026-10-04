@@ -17,6 +17,7 @@ import { MovimientoFactory } from 'src/modules/movimientos/factory/MovimientoFac
 import { Inventario } from 'src/modules/inventario/entities';
 import { Almacen } from 'src/modules/almacen/entities/almacen.entity';
 import { Producto } from 'src/modules/productos/entities/producto.entity';
+import { PertenenciaService } from 'src/common/pertenencia.service';
 import { CreateComprobanteDetalleDto } from '../dto/comprobante-detalle/create-comprobante-detalle.dto';
 
 @Injectable()
@@ -35,12 +36,23 @@ export class TransferenciasService {
     private readonly movimientoService: MovimientosService,
     private readonly movimientoFactory: MovimientoFactory,
     private readonly dataSource: DataSource,
+    private readonly pertenencia: PertenenciaService,
   ) {}
 
   async registerTransfer(
     dto: CreateTransferenciaDto,
     personaId: number,
   ): Promise<ResponseTransferenciaDto> {
+    // Almacenes y productos deben pertenecer a la empresa del usuario
+    await this.pertenencia.almacenes(
+      [dto.idAlmacenOrigen, dto.idAlmacenDestino],
+      personaId,
+    );
+    await this.pertenencia.productos(
+      (dto.detalles ?? []).map((d) => d.idProducto),
+      personaId,
+    );
+
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();

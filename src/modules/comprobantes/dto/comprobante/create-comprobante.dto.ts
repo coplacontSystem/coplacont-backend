@@ -8,6 +8,8 @@ import {
   IsNumber,
   ValidateNested,
   Length,
+  IsInt,
+  Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Moneda } from '../../enum/tipo-moneda.enum';
@@ -20,6 +22,8 @@ export class CreateComprobanteDto {
     example: 1,
   })
   @IsNotEmpty()
+  @IsInt()
+  @Min(1)
   idPersona: number;
 
   @ApiProperty({
@@ -44,7 +48,6 @@ export class CreateComprobanteDto {
   })
   @IsDateString()
   @IsNotEmpty()
-  @Type(() => Date)
   fechaEmision: Date;
 
   @ApiProperty({ enum: Moneda })
@@ -80,8 +83,8 @@ export class CreateComprobanteDto {
     description: 'Fecha de vencimiento',
     example: '2025-08-20',
   })
+  @IsOptional()
   @IsDateString()
-  @Type(() => Date)
   fechaVencimiento?: Date;
 
   @ApiPropertyOptional({

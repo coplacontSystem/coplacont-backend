@@ -51,7 +51,8 @@ export interface Empresa {
   api: Api;
 }
 
-let ruc = 20100000000;
+// Base distinta por archivo de test: las suites comparten la BD y el RUC es único
+let ruc = Number(`20${String(Date.now()).slice(-9)}`);
 
 /**
  * Crea una empresa con un usuario EMPRESA directamente en BD (el alta real envía
@@ -92,4 +93,46 @@ export async function crearEmpresa(
   }
   api.token = login.body.jwt;
   return { personaId: Number(persona.id), api };
+}
+
+/** Crea un usuario ADMIN (sin empresa) y devuelve un cliente autenticado. */
+export async function crearAdmin(app: INestApplication): Promise<Api> {
+  const ds = app.get(DataSource);
+  ruc += 1;
+  const email = `admin.${ruc}@test.local`;
+  const password = `Clave-${ruc}`;
+  const hash = await bcrypt.hash(password, 10);
+  const [user] = await ds.query(
+    `INSERT INTO "user" (email, nombre, contrasena, habilitado, "esPrincipal")
+     VALUES ($1, 'Admin de pruebas', $2, true, false) RETURNING id`,
+    [email, hash],
+  );
+  await ds.query(
+    `INSERT INTO user_role ("userId", "roleId") SELECT $1, id FROM role WHERE nombre = 'ADMIN'`,
+    [user.id],
+  );
+  const api = new Api(app);
+  const login = await api.post('/api/auth/login', {
+    email,
+    contrasena: password,
+  });
+  if (!login.body?.jwt) {
+    throw new Error(
+      `No se pudo iniciar sesión como admin: ${JSON.stringify(login.body)}`,
+    );
+  }
+  api.token = login.body.jwt;
+  return api;
+}
+
+/** Falla mostrando el cuerpo de la respuesta si el status no es el esperado. */
+export function esperarStatus(
+  res: { status: number; body: unknown },
+  status: number,
+) {
+  if (res.status !== status) {
+    throw new Error(
+      `Se esperaba HTTP ${status} y llegó ${res.status}: ${JSON.stringify(res.body).slice(0, 500)}`,
+    );
+  }
 }

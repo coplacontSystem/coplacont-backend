@@ -1,3 +1,4 @@
+import { CommonModule } from './common/common.module';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -31,6 +32,9 @@ import { UserRole } from './modules/users/entities/user-role.entity';
 
     // TypeORM para el servicio de seed
     TypeOrmModule.forFeature([Role, User, UserRole]),
+
+    // Servicios transversales (verificación de pertenencia por empresa)
+    CommonModule,
 
     // Módulos funcionales
     UserModule,

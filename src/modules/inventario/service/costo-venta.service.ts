@@ -46,11 +46,13 @@ export class CostoVentaService {
    */
   async generateCostoVentaReport(
     request: CostoVentaRequestDto,
+    personaId: number,
   ): Promise<CostoVentaResponseDto> {
     try {
       // Preparar filtros para el repositorio
       const filtros: CostoVentaFiltros = {
         año: request.año,
+        personaId,
         idAlmacen: request.idAlmacen,
         idProducto: request.idProducto,
       };
@@ -174,9 +176,10 @@ export class CostoVentaService {
    */
   async exportCostoVentaReport(
     request: CostoVentaRequestDto,
+    personaId: number,
     formato: 'json' | 'excel' = 'json',
   ): Promise<CostoVentaResponseDto> {
-    const reporte = await this.generateCostoVentaReport(request);
+    const reporte = await this.generateCostoVentaReport(request, personaId);
 
     switch (formato) {
       case 'json':
@@ -196,6 +199,7 @@ export class CostoVentaService {
    */
   async generateCostoVentaPorInventarioReport(
     request: CostoVentaPorInventarioRequestDto,
+    personaId: number,
   ): Promise<CostoVentaPorInventarioResponseDto> {
     try {
       // Validar año
@@ -204,6 +208,7 @@ export class CostoVentaService {
       // Preparar filtros para el repositorio
       const filtros: CostoVentaPorInventarioFiltros = {
         año: request.año,
+        personaId,
         idAlmacen: request.idAlmacen,
         idProducto: request.idProducto,
       };
@@ -310,9 +315,13 @@ export class CostoVentaService {
    */
   async exportCostoVentaPorInventarioReport(
     request: CostoVentaPorInventarioRequestDto,
+    personaId: number,
     formato: 'json' | 'excel' = 'json',
   ): Promise<CostoVentaPorInventarioResponseDto> {
-    const reporte = await this.generateCostoVentaPorInventarioReport(request);
+    const reporte = await this.generateCostoVentaPorInventarioReport(
+      request,
+      personaId,
+    );
 
     switch (formato) {
       case 'json':

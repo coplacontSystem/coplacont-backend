@@ -16,6 +16,8 @@ import { KardexService } from '../service/kardex.service';
 import { KardexRequestDto, KardexResponseDto } from '../dto';
 import { CurrentUser } from '../../users/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../users/decorators/current-user.decorator';
+import { PertenenciaService } from '../../../common/pertenencia.service';
+import { empresaDe } from '../../../common/empresa';
 import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
 
 @ApiTags('Kardex')
@@ -23,7 +25,10 @@ import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('api/kardex')
 export class KardexController {
-  constructor(private readonly kardexService: KardexService) {}
+  constructor(
+    private readonly kardexService: KardexService,
+    private readonly pertenencia: PertenenciaService,
+  ) {}
 
   /**
    * Genera el reporte Kardex para un inventario específico
@@ -72,12 +77,12 @@ export class KardexController {
     @Query(new ValidationPipe({ transform: true })) query: KardexRequestDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<KardexResponseDto> {
-    if (!user.personaId) {
-      throw new Error('Usuario no tiene una empresa asociada');
-    }
-
-    // Asignar personaId del usuario autenticado
-    query.personaId = user.personaId;
+    // La empresa siempre sale del token, nunca del query
+    query.personaId = empresaDe(user);
+    await this.pertenencia.inventarios(
+      [Number(query.idInventario)],
+      query.personaId,
+    );
 
     return await this.kardexService.generateKardexReport(query);
   }

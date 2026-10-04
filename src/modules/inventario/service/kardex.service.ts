@@ -39,12 +39,6 @@ export class KardexService {
     this.logger.log(
       `🔍 [KARDEX-TRACE] Parsed inicioISO=${fechaInicioDate ? fechaInicioDate.toISOString() : 'null'} inicioLocal=${fechaInicioDate ? fechaInicioDate.toString() : 'null'} inicioOffset=${fechaInicioDate ? fechaInicioDate.getTimezoneOffset() : 'n/a'} finISO=${fechaFinDate ? fechaFinDate.toISOString() : 'null'} finLocal=${fechaFinDate ? fechaFinDate.toString() : 'null'} finOffset=${fechaFinDate ? fechaFinDate.getTimezoneOffset() : 'n/a'}`,
     );
-    console.log(
-      `[KARDEX-CONSOLE] Request idInventario=${idInventario} personaId=${personaId ?? 'null'} fechaInicioRaw=${fechaInicio ?? 'null'} fechaFinRaw=${fechaFin ?? 'null'}`,
-    );
-    console.log(
-      `[KARDEX-CONSOLE] Parsed inicioISO=${fechaInicioDate ? fechaInicioDate.toISOString() : 'null'} inicioLocal=${fechaInicioDate ? fechaInicioDate.toString() : 'null'} inicioOffset=${fechaInicioDate ? fechaInicioDate.getTimezoneOffset() : 'n/a'} finISO=${fechaFinDate ? fechaFinDate.toISOString() : 'null'} finLocal=${fechaFinDate ? fechaFinDate.toString() : 'null'} finOffset=${fechaFinDate ? fechaFinDate.getTimezoneOffset() : 'n/a'}`,
-    );
 
     // Obtener información del inventario
     const inventario = await this.inventarioRepository.findById(idInventario);
@@ -74,7 +68,6 @@ export class KardexService {
     const configuracionPeriodo =
       await this.periodoContableService.obtenerConfiguracion(personaId);
     const metodoValoracion = configuracionPeriodo.metodoCalculoCosto;
-    console.log('metodoValoracion', metodoValoracion);
     // Usar KardexCalculationService para cálculo dinámico
     const kardexResult: KardexResult | null =
       await this.kardexCalculationService.generarKardex(
@@ -83,7 +76,6 @@ export class KardexService {
         fechaFinDate || new Date(), // Si no hay fecha fin, usar fecha actual
         metodoValoracion,
       );
-    console.log('kardexResult', kardexResult);
 
     // Log de conteo y rango de fechas en movimientos calculados
     const totalMov = kardexResult?.movimientos?.length ?? 0;
@@ -93,9 +85,6 @@ export class KardexService {
       totalMov > 0 ? kardexResult!.movimientos[totalMov - 1].fecha : undefined;
     this.logger.log(
       `✅ [KARDEX-TRACE] Movimientos=${totalMov} firstISO=${firstDate ? firstDate.toISOString() : 'null'} lastISO=${lastDate ? lastDate.toISOString() : 'null'}`,
-    );
-    console.log(
-      `[KARDEX-CONSOLE] Movimientos=${totalMov} firstISO=${firstDate ? firstDate.toISOString() : 'null'} lastISO=${lastDate ? lastDate.toISOString() : 'null'}`,
     );
 
     if (!kardexResult) {
@@ -117,9 +106,6 @@ export class KardexService {
         const f = mov.fecha;
         this.logger.log(
           `🧭 [KARDEX-TRACE] Mov[${idx}] fechaISO=${f.toISOString()} fechaLocal=${f.toString()} offset=${f.getTimezoneOffset()} formatted=${this.formatDate(f)} tipo=${mov.tipoMovimiento} comprob=${mov.tipoComprobante ?? ''} nro=${mov.numeroComprobante ?? ''}`,
-        );
-        console.log(
-          `[KARDEX-CONSOLE] Mov[${idx}] fechaISO=${f.toISOString()} fechaLocal=${f.toString()} hrsLocal=${f.getHours()} hrsUTC=${f.getUTCHours()} offset=${f.getTimezoneOffset()} formatted=${this.formatDate(f)} tipo=${mov.tipoMovimiento} comprob=${mov.tipoComprobante ?? ''} nro=${mov.numeroComprobante ?? ''}`,
         );
         const movimientoDto: {
           fecha: string;

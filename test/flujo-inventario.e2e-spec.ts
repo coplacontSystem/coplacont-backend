@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { createTestApp } from './support/app';
-import { crearEmpresa, Empresa } from './support/api';
+import { crearEmpresa, Empresa, esperarStatus } from './support/api';
 import {
   comprar,
   crearInventario,
@@ -44,15 +44,15 @@ describe('Flujo de inventario (e2e)', () => {
     const c1 = await comprar(empresa.api, esc, '2026-03-02', [
       { idInventario: inv, cantidad: 10, precio: 10 },
     ]);
-    expect(c1.status).toBe(201);
+    esperarStatus(c1, 201);
     const c2 = await comprar(empresa.api, esc, '2026-03-05', [
       { idInventario: inv, cantidad: 10, precio: 20 },
     ]);
-    expect(c2.status).toBe(201);
+    esperarStatus(c2, 201);
     const v1 = await vender(empresa.api, esc, '2026-03-10', [
       { idInventario: inv, cantidad: 15, precio: 30 },
     ]);
-    expect(v1.status).toBe(201);
+    esperarStatus(v1, 201);
     return inv;
   }
 
@@ -141,7 +141,7 @@ describe('Flujo de inventario (e2e)', () => {
         const posterior = await vender(fifo.api, escFifo, '2026-05-20', [
           { idInventario: inv, cantidad: 8, precio: 30 },
         ]);
-        expect(posterior.status).toBe(201);
+        esperarStatus(posterior, 201);
 
         const retroactiva = await vender(fifo.api, escFifo, '2026-05-05', [
           { idInventario: inv, cantidad: 5, precio: 30 },
@@ -156,13 +156,13 @@ describe('Flujo de inventario (e2e)', () => {
     // Con el seed actual coinciden; estos tests avisan si eso cambia.
     it('el listado de compras incluye las compras registradas', async () => {
       const res = await fifo.api.get('/api/compras');
-      expect(res.status).toBe(200);
+      esperarStatus(res, 200);
       expect(res.body.length).toBeGreaterThan(0);
     });
 
     it('el listado de ventas incluye las ventas registradas', async () => {
       const res = await fifo.api.get('/api/ventas');
-      expect(res.status).toBe(200);
+      esperarStatus(res, 200);
       expect(res.body.length).toBeGreaterThan(0);
     });
   });

@@ -10,7 +10,6 @@ import { PeriodoContable } from '../periodos/entities/periodo-contable.entity';
 import { ComprobanteController } from './controller/comprobante.controller';
 import { ComprasController } from './controller/compras.controller';
 import { VentasController } from './controller/ventas.controller';
-import { TestComprobanteController } from './controller/test-comprobante.controller';
 import { TransferenciasController } from './controller/transferencias.controller';
 import { ComprobanteService } from './service/comprobante.service';
 import { ComprasService } from './service/compras.service';
@@ -45,7 +44,6 @@ import { PeriodosModule } from '../periodos/periodos.module';
     ComprobanteController,
     ComprasController,
     VentasController,
-    TestComprobanteController,
     TransferenciasController,
   ],
   providers: [

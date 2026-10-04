@@ -39,8 +39,6 @@ export class VentasService {
       order: { fechaRegistro: 'DESC' },
     });
 
-    console.log(comprobantes);
-
     return plainToInstance(ResponseComprobanteDto, comprobantes, {
       excludeExtraneousValues: true,
     });

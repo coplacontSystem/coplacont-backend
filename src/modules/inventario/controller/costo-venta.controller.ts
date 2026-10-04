@@ -4,9 +4,15 @@ import {
   Query,
   ValidationPipe,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { CostoVentaService } from '../service/costo-venta.service';
+import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
+import { CurrentUser } from '../../users/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../users/decorators/current-user.decorator';
+import { PertenenciaService } from '../../../common/pertenencia.service';
+import { empresaDe } from '../../../common/empresa';
 import {
   CostoVentaRequestDto,
   CostoVentaResponseDto,
@@ -18,9 +24,28 @@ import {
  * Controlador para la gestión de reportes de Estado de Costo de Venta
  */
 @ApiTags('Costo de Venta')
+@UseGuards(JwtAuthGuard)
 @Controller('api/costo-venta')
 export class CostoVentaController {
-  constructor(private readonly costoVentaService: CostoVentaService) {}
+  constructor(
+    private readonly costoVentaService: CostoVentaService,
+    private readonly pertenencia: PertenenciaService,
+  ) {}
+
+  /** Empresa del usuario, verificando que el almacén y el producto filtrados sean suyos. */
+  private async empresa(
+    user: AuthenticatedUser,
+    filtros: { idAlmacen?: number; idProducto?: number },
+  ): Promise<number> {
+    const personaId = empresaDe(user);
+    if (filtros.idAlmacen) {
+      await this.pertenencia.almacenes([filtros.idAlmacen], personaId);
+    }
+    if (filtros.idProducto) {
+      await this.pertenencia.productos([filtros.idProducto], personaId);
+    }
+    return personaId;
+  }
 
   /**
    * Genera el reporte anual de Estado de Costo de Venta
@@ -72,9 +97,13 @@ export class CostoVentaController {
   })
   async generateCostoVentaReport(
     @Query(new ValidationPipe({ transform: true })) query: CostoVentaRequestDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<CostoVentaResponseDto> {
     try {
-      return await this.costoVentaService.generateCostoVentaReport(query);
+      return await this.costoVentaService.generateCostoVentaReport(
+        query,
+        await this.empresa(user, query),
+      );
     } catch (error) {
       const msg = (error as Error)?.message || 'Error al generar el reporte';
       throw new BadRequestException(`Error al generar el reporte: ${msg}`);
@@ -137,6 +166,7 @@ export class CostoVentaController {
   async exportCostoVentaReport(
     @Query(new ValidationPipe({ transform: true }))
     query: CostoVentaRequestDto & { formato?: string },
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<any> {
     try {
       const formato = query.formato || 'json';
@@ -154,6 +184,7 @@ export class CostoVentaController {
       delete (requestData as { formato?: string }).formato;
       return await this.costoVentaService.exportCostoVentaReport(
         requestData as CostoVentaRequestDto,
+        await this.empresa(user, requestData),
         formato as 'json',
       );
     } catch (error) {
@@ -201,6 +232,7 @@ export class CostoVentaController {
   })
   async getCostoVentaResumen(
     @Query(new ValidationPipe({ transform: true })) query: CostoVentaRequestDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<{
     sumatorias: any;
     año: number;
@@ -208,8 +240,10 @@ export class CostoVentaController {
     producto?: string;
   }> {
     try {
-      const reporte =
-        await this.costoVentaService.generateCostoVentaReport(query);
+      const reporte = await this.costoVentaService.generateCostoVentaReport(
+        query,
+        await this.empresa(user, query),
+      );
       return {
         año: reporte.año,
         almacen: reporte.almacen,
@@ -274,10 +308,12 @@ export class CostoVentaController {
   async generateCostoVentaPorInventarioReport(
     @Query(new ValidationPipe({ transform: true }))
     query: CostoVentaPorInventarioRequestDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<CostoVentaPorInventarioResponseDto> {
     try {
       return await this.costoVentaService.generateCostoVentaPorInventarioReport(
         query,
+        await this.empresa(user, query),
       );
     } catch (error) {
       throw new BadRequestException(
@@ -342,6 +378,7 @@ export class CostoVentaController {
   async exportCostoVentaPorInventarioReport(
     @Query(new ValidationPipe({ transform: true }))
     query: CostoVentaPorInventarioRequestDto & { formato?: string },
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<import('../dto/costo-venta').CostoVentaPorInventarioResponseDto> {
     try {
       const formato = query.formato || 'json';
@@ -352,6 +389,7 @@ export class CostoVentaController {
       };
       return await this.costoVentaService.exportCostoVentaPorInventarioReport(
         requestData,
+        await this.empresa(user, requestData),
         formato as 'json',
       );
     } catch (error) {

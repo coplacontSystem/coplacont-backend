@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventarioLote } from '../entities/inventario-lote.entity';
@@ -433,7 +433,9 @@ export class StockCalculationService {
     }
 
     if (cantidadRestante > 0) {
-      throw new Error(`Stock insuficiente. Faltante: ${cantidadRestante}`);
+      throw new BadRequestException(
+        `Stock insuficiente. Faltante: ${cantidadRestante}`,
+      );
     }
 
     return consumo;

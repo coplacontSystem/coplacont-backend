@@ -11,6 +11,8 @@ export interface CostoVentaMensualData {
 
 export interface CostoVentaFiltros {
   año: number;
+  /** Empresa dueña de los datos (obligatorio: nunca mezclar empresas) */
+  personaId: number;
   idAlmacen?: number;
   idProducto?: number;
 }
@@ -26,6 +28,8 @@ export interface CostoVentaPorInventarioData {
 
 export interface CostoVentaPorInventarioFiltros {
   año: number;
+  /** Empresa dueña de los datos (obligatorio: nunca mezclar empresas) */
+  personaId: number;
   idAlmacen?: number;
   idProducto?: number;
 }
@@ -65,6 +69,10 @@ export class CostoVentaRepository {
 
     const params: any[] = [filtros.año];
     let paramIndex = 2;
+
+    sql += ` AND a.id_persona = $${paramIndex}`;
+    params.push(filtros.personaId);
+    paramIndex++;
 
     if (filtros.idAlmacen) {
       sql += ` AND a.id = $${paramIndex}`;
@@ -120,6 +128,10 @@ export class CostoVentaRepository {
 
     const params: any[] = [filtros.año];
     let paramIndex = 2;
+
+    sql += ` AND a.id_persona = $${paramIndex}`;
+    params.push(filtros.personaId);
+    paramIndex++;
 
     if (filtros.idAlmacen) {
       sql += ` AND a.id = $${paramIndex}`;
@@ -177,6 +189,10 @@ export class CostoVentaRepository {
 
     const params: any[] = [fechaCorte];
     let paramIndex = 2;
+
+    sql += ` AND a.id_persona = $${paramIndex}`;
+    params.push(filtros.personaId);
+    paramIndex++;
 
     if (filtros.idAlmacen) {
       sql += ` AND a.id = $${paramIndex}`;
@@ -284,6 +300,10 @@ export class CostoVentaRepository {
     const params: any[] = [filtros.año];
     let paramIndex = 2;
 
+    sql += ` AND a.id_persona = $${paramIndex}`;
+    params.push(filtros.personaId);
+    paramIndex++;
+
     if (filtros.idAlmacen) {
       sql += ` AND i.id_almacen = $${paramIndex}`;
       params.push(filtros.idAlmacen);
@@ -335,6 +355,10 @@ export class CostoVentaRepository {
 
     const params: any[] = [filtros.año];
     let paramIndex = 2;
+
+    sql += ` AND a.id_persona = $${paramIndex}`;
+    params.push(filtros.personaId);
+    paramIndex++;
 
     if (filtros.idAlmacen) {
       sql += ` AND i.id_almacen = $${paramIndex}`;
@@ -391,6 +415,10 @@ export class CostoVentaRepository {
     const params: any[] = [filtros.año];
     let paramIndex = 2;
 
+    sql += ` AND a.id_persona = $${paramIndex}`;
+    params.push(filtros.personaId);
+    paramIndex++;
+
     if (filtros.idAlmacen) {
       sql += ` AND i.id_almacen = $${paramIndex}`;
       params.push(filtros.idAlmacen);
@@ -436,6 +464,10 @@ export class CostoVentaRepository {
 
     const params: any[] = [];
     let paramIndex = 1;
+
+    sql += ` AND a.id_persona = $${paramIndex}`;
+    params.push(filtros.personaId);
+    paramIndex++;
 
     if (filtros.idAlmacen) {
       sql += ` AND i.id_almacen = $${paramIndex}`;

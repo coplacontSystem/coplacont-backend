@@ -1,4 +1,15 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { RolesGuard } from '../guards/roles.guard';
+import { Roles } from '../decorators/roles.decorator';
+import { RolEnum } from '../enums/RoleEnum';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { EmailService } from '../services/email.service';
 import { EmailOptions, EmailResponse } from '../../../config/email.config';
@@ -9,6 +20,8 @@ import {
 } from '../dto/email';
 
 @ApiTags('Email')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(RolEnum.ADMIN)
 @Controller('api/email')
 export class EmailController {
   constructor(private readonly emailService: EmailService) {}

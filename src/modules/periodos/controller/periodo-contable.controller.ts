@@ -279,6 +279,8 @@ export class PeriodoContableController {
     if (!user.personaId) {
       throw new Error('Usuario no tiene empresa asociada');
     }
+    // Quien cierra es siempre el usuario autenticado
+    cerrarDto.usuarioCierre = user.email;
     return this.periodoContableService.cerrarPorPersona(
       id,
       user.personaId,

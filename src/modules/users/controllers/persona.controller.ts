@@ -1,3 +1,7 @@
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { RolesGuard } from '../guards/roles.guard';
+import { Roles } from '../decorators/roles.decorator';
+import { RolEnum } from '../enums/RoleEnum';
 import {
   Controller,
   Get,
@@ -7,6 +11,7 @@ import {
   HttpCode,
   HttpStatus,
   Body,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -24,6 +29,8 @@ import { UpdatePersonaDto } from '../dto/persona/update-persona.dto';
 import { plainToInstance } from 'class-transformer';
 
 @ApiTags('Personas/Empresas')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(RolEnum.ADMIN)
 @Controller('api/persona')
 export class PersonaController {
   constructor(private readonly personaService: PersonaService) {}

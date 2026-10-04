@@ -1,4 +1,21 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { esAdmin, RolesGuard } from '../guards/roles.guard';
+import { Roles } from '../decorators/roles.decorator';
+import { RolEnum } from '../enums/RoleEnum';
+import { CurrentUser } from '../decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../decorators/current-user.decorator';
 import {
   ApiTags,
   ApiOperation,
@@ -16,6 +33,7 @@ import { UpdateUserDto } from '../dto/user/update-user.dto';
 import { hash } from 'bcrypt';
 
 @ApiTags('Usuarios')
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('api/user')
 export class UserController {
   constructor(
@@ -48,7 +66,11 @@ export class UserController {
     },
   })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
-  findById(@Param('id') id: number): Promise<ResponseUserDto> {
+  findById(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ResponseUserDto> {
+    this.assertAdminOPropio(user, id);
     return this.userService.findById(id);
   }
 
@@ -75,10 +97,14 @@ export class UserController {
       },
     ],
   })
-  findAll() {
-    return this.userService.findAll();
+  async findAll(@CurrentUser() user: AuthenticatedUser) {
+    const usuarios = await this.userService.findAll();
+    // Un usuario que no es ADMIN solo puede verse a sí mismo
+    if (esAdmin(user)) return usuarios;
+    return usuarios.filter((u: { id: number }) => Number(u.id) === user.id);
   }
 
+  @Roles(RolEnum.ADMIN)
   @Post()
   @ApiOperation({ summary: 'Crear un nuevo usuario' })
   @ApiBody({
@@ -146,12 +172,19 @@ export class UserController {
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
   update(
-    @Param('id') id: number,
+    @Param('id', ParseIntPipe) id: number,
     @Body() updateUserDto: UpdateUserDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<void> {
-    return this.userService.update(id, updateUserDto);
+    this.assertAdminOPropio(user, id);
+    // Sobre su propia cuenta, un usuario solo puede cambiar nombre y email
+    const datos: UpdateUserDto = esAdmin(user)
+      ? updateUserDto
+      : { nombre: updateUserDto.nombre, email: updateUserDto.email };
+    return this.userService.update(id, datos);
   }
 
+  @Roles(RolEnum.ADMIN)
   @Patch(':id/disabled')
   @ApiOperation({ summary: 'Desactivar usuario (método legacy)' })
   @ApiParam({
@@ -171,6 +204,7 @@ export class UserController {
    * @param createUserForPersonaDto Datos del usuario a crear
    * @returns Usuario creado
    */
+  @Roles(RolEnum.ADMIN)
   @Post('persona/:idPersona')
   @ApiOperation({
     summary: 'Crear usuario para una empresa específica',
@@ -249,6 +283,7 @@ export class UserController {
    * Desactiva una empresa y todos sus usuarios asociados
    * @param idPersona ID de la empresa a desactivar
    */
+  @Roles(RolEnum.ADMIN)
   @Patch('persona/:idPersona/disabled')
   @ApiOperation({
     summary: 'Desactivar empresa y todos sus usuarios',
@@ -281,6 +316,7 @@ export class UserController {
    * Desactiva un usuario individual
    * @param id ID del usuario a desactivar
    */
+  @Roles(RolEnum.ADMIN)
   @Patch(':id/disable')
   @ApiOperation({
     summary: 'Desactivar usuario individual',
@@ -353,9 +389,16 @@ export class UserController {
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
   @ApiResponse({ status: 400, description: 'Contraseña inválida o muy débil' })
   async updatePassword(
-    @Param('id') id: number,
+    @Param('id', ParseIntPipe) id: number,
     @Body() body: { password: string },
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<void> {
+    this.assertAdminOPropio(user, id);
+    if (typeof body?.password !== 'string' || body.password.length < 8) {
+      throw new BadRequestException(
+        'La contraseña debe tener al menos 8 caracteres',
+      );
+    }
     const hashedPassword = await hash(body.password, 10);
     return this.userService.updatePassword(id, hashedPassword);
   }
@@ -365,6 +408,7 @@ export class UserController {
    * @param createPersonaWithUserDto Datos de la empresa y usuario principal
    * @returns Empresa y usuario creados
    */
+  @Roles(RolEnum.ADMIN)
   @Post('empresa-con-usuario')
   @ApiOperation({
     summary: 'Crear empresa con usuario principal',
@@ -446,6 +490,7 @@ export class UserController {
     return this.personaService.createPersonaWithUser(createPersonaWithUserDto);
   }
 
+  @Roles(RolEnum.ADMIN)
   @Patch(':id/enable')
   @ApiOperation({
     summary: 'Activar usuario individual',
@@ -468,5 +513,12 @@ export class UserController {
   @ApiResponse({ status: 400, description: 'Error al activar el usuario' })
   async enableUser(@Param('id') id: number): Promise<void> {
     await this.userService.enableUser(id);
+  }
+
+  /** Solo un ADMIN puede operar sobre usuarios distintos del propio. */
+  private assertAdminOPropio(user: AuthenticatedUser, id: number): void {
+    if (!esAdmin(user) && Number(user.id) !== Number(id)) {
+      throw new ForbiddenException('No tiene permisos sobre este usuario');
+    }
   }
 }

@@ -1,5 +1,12 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { Repository, DataSource, Not, In, EntityManager } from 'typeorm';
+import {
+  Repository,
+  DataSource,
+  Not,
+  In,
+  EntityManager,
+  QueryFailedError,
+} from 'typeorm';
 import { Comprobante } from '../entities/comprobante';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateComprobanteDto } from '../dto/comprobante/create-comprobante.dto';
@@ -19,6 +26,7 @@ import { MovimientoFactory } from 'src/modules/movimientos/factory/MovimientoFac
 import { LoteCreationService } from 'src/modules/inventario/service/lote-creation.service';
 import { PeriodoContableService } from 'src/modules/periodos/service';
 import { PersonaService } from 'src/modules/users/services/person.service';
+import { PertenenciaService } from 'src/common/pertenencia.service';
 
 @Injectable()
 export class ComprobanteService implements OnModuleInit {
@@ -38,6 +46,7 @@ export class ComprobanteService implements OnModuleInit {
     private readonly loteCreationService: LoteCreationService,
     private readonly periodoContableService: PeriodoContableService,
     private readonly dataSource: DataSource,
+    private readonly pertenencia: PertenenciaService,
   ) {}
 
   /**
@@ -108,6 +117,22 @@ export class ComprobanteService implements OnModuleInit {
     await queryRunner.startTransaction();
 
     try {
+      // Todo lo referenciado debe pertenecer a la empresa del usuario
+      await this.pertenencia.entidades(
+        [createComprobanteDto.idPersona],
+        personaId,
+      );
+      await this.pertenencia.inventarios(
+        (createComprobanteDto.detalles ?? []).map((d) => d.idInventario),
+        personaId,
+      );
+      if (createComprobanteDto.idComprobanteAfecto) {
+        await this.pertenencia.comprobantes(
+          [createComprobanteDto.idComprobanteAfecto],
+          personaId,
+        );
+      }
+
       //Verificar que comprobante este dentro del PERIODO
       const periodoActivoDto =
         await this.periodoContableService.obtenerPeriodoActivo(personaId);
@@ -158,20 +183,27 @@ export class ComprobanteService implements OnModuleInit {
       }
 
       // Obtener las entidades TablaDetalle para las relaciones
+      // Tipo de operación de la Tabla 12 y tipo de comprobante de la Tabla 10
       const tipoOperacion = await this.tablaDetalleRepository.findOne({
-        where: { idTablaDetalle: createComprobanteDto.idTipoOperacion },
+        where: {
+          idTablaDetalle: createComprobanteDto.idTipoOperacion,
+          tabla: { numeroTabla: '12' },
+        },
       });
       if (!tipoOperacion) {
-        throw new Error(
+        throw new BadRequestException(
           `Tipo de operación con ID ${createComprobanteDto.idTipoOperacion} no encontrado`,
         );
       }
 
       const tipoComprobante = await this.tablaDetalleRepository.findOne({
-        where: { idTablaDetalle: createComprobanteDto.idTipoComprobante },
+        where: {
+          idTablaDetalle: createComprobanteDto.idTipoComprobante,
+          tabla: { numeroTabla: '10' },
+        },
       });
       if (!tipoComprobante) {
-        throw new Error(
+        throw new BadRequestException(
           `Tipo de comprobante con ID ${createComprobanteDto.idTipoComprobante} no encontrado`,
         );
       }
@@ -351,6 +383,10 @@ export class ComprobanteService implements OnModuleInit {
     } catch (error: any) {
       await queryRunner.rollbackTransaction();
       if (error && typeof error === 'object' && 'status' in error) {
+        throw error;
+      }
+      // Errores de base de datos: los traduce el filtro global sin exponer detalles
+      if (error instanceof QueryFailedError) {
         throw error;
       }
       throw new InternalServerErrorException({

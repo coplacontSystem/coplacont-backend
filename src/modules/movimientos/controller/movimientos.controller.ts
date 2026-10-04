@@ -22,6 +22,11 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
+import { RolesGuard } from '../../users/guards/roles.guard';
+import { Roles } from '../../users/decorators/roles.decorator';
+import { RolEnum } from '../../users/enums/RoleEnum';
+import { PertenenciaService } from '../../../common/pertenencia.service';
+import { empresaDe } from '../../../common/empresa';
 import { CurrentUser } from '../../users/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../users/decorators/current-user.decorator';
 import { MovimientosService } from '../service/movimientos.service';
@@ -35,14 +40,19 @@ import { EstadoMovimiento } from '../enum/estado-movimiento.enum';
  */
 @ApiTags('Movimientos')
 @Controller('movimientos')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class MovimientosController {
-  constructor(private readonly movimientosService: MovimientosService) {}
+  constructor(
+    private readonly movimientosService: MovimientosService,
+    private readonly pertenencia: PertenenciaService,
+  ) {}
 
   /**
    * Crear un nuevo movimiento
    */
+  // Los movimientos de kardex se generan desde comprobantes; editarlos a mano solo lo hace un ADMIN
+  @Roles(RolEnum.ADMIN)
   @Post()
   @ApiOperation({ summary: 'Crear un nuevo movimiento de inventario' })
   @ApiBody({ type: CreateMovimientoDto })
@@ -94,19 +104,18 @@ export class MovimientosController {
     idComprobante?: number,
     @CurrentUser() user?: AuthenticatedUser,
   ): Promise<ResponseMovimientoDto[]> {
-    if (!user?.personaId) {
-      throw new Error('Usuario no tiene una empresa asociada');
-    }
+    const personaId = empresaDe(user!);
     if (tipo) {
-      return await this.movimientosService.findByTipo(tipo, user.personaId);
+      return await this.movimientosService.findByTipo(tipo, personaId);
     }
     if (estado) {
-      return await this.movimientosService.findByEstado(estado, user.personaId);
+      return await this.movimientosService.findByEstado(estado, personaId);
     }
     if (idComprobante) {
+      await this.pertenencia.comprobantes([idComprobante], personaId);
       return await this.movimientosService.findByComprobante(idComprobante);
     }
-    return await this.movimientosService.findAll(user.personaId);
+    return await this.movimientosService.findAll(personaId);
   }
 
   /**
@@ -123,25 +132,20 @@ export class MovimientosController {
   @ApiResponse({ status: 404, description: 'Movimiento no encontrado' })
   async findOne(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseMovimientoDto> {
+    await this.pertenencia.movimientos([id], empresaDe(user));
     return await this.movimientosService.findOne(id);
   }
 
   /**
    * Procesar un movimiento (actualizar inventarios)
    */
-  @Patch(':id/procesar')
-  @ApiOperation({ summary: 'Procesar un movimiento y actualizar inventarios' })
-  @ApiParam({ name: 'id', description: 'ID del movimiento' })
-  @ApiResponse({
-    status: 200,
-    description: 'Movimiento procesado exitosamente',
-    type: ResponseMovimientoDto,
-  })
-
   /**
    * Cancelar un movimiento
    */
+  // Los movimientos de kardex se generan desde comprobantes; editarlos a mano solo lo hace un ADMIN
+  @Roles(RolEnum.ADMIN)
   @Patch(':id/cancelar')
   @ApiOperation({ summary: 'Cancelar un movimiento' })
   @ApiParam({ name: 'id', description: 'ID del movimiento' })
@@ -164,6 +168,8 @@ export class MovimientosController {
   /**
    * Actualizar estado de un movimiento
    */
+  // Los movimientos de kardex se generan desde comprobantes; editarlos a mano solo lo hace un ADMIN
+  @Roles(RolEnum.ADMIN)
   @Patch(':id/estado')
   @ApiOperation({ summary: 'Actualizar el estado de un movimiento' })
   @ApiParam({ name: 'id', description: 'ID del movimiento' })
@@ -196,6 +202,8 @@ export class MovimientosController {
   /**
    * Eliminar un movimiento
    */
+  // Los movimientos de kardex se generan desde comprobantes; editarlos a mano solo lo hace un ADMIN
+  @Roles(RolEnum.ADMIN)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Eliminar un movimiento' })
@@ -232,10 +240,7 @@ export class MovimientosController {
     @Param('tipo') tipo: TipoMovimiento,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseMovimientoDto[]> {
-    if (!user.personaId) {
-      throw new Error('Usuario no tiene una empresa asociada');
-    }
-    return await this.movimientosService.findByTipo(tipo, user.personaId);
+    return await this.movimientosService.findByTipo(tipo, empresaDe(user));
   }
 
   /**
@@ -257,10 +262,7 @@ export class MovimientosController {
     @Param('estado') estado: EstadoMovimiento,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseMovimientoDto[]> {
-    if (!user.personaId) {
-      throw new Error('Usuario no tiene una empresa asociada');
-    }
-    return await this.movimientosService.findByEstado(estado, user.personaId);
+    return await this.movimientosService.findByEstado(estado, empresaDe(user));
   }
 
   /**
@@ -276,7 +278,9 @@ export class MovimientosController {
   })
   async findByComprobante(
     @Param('idComprobante', ParseIntPipe) idComprobante: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseMovimientoDto[]> {
+    await this.pertenencia.comprobantes([idComprobante], empresaDe(user));
     return await this.movimientosService.findByComprobante(idComprobante);
   }
 }

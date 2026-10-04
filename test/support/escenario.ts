@@ -1,4 +1,4 @@
-import { Api, Empresa, idOf } from './api';
+import { Api, Empresa, esperarStatus, idOf } from './api';
 
 let correlativoDoc = 1000;
 
@@ -30,7 +30,7 @@ export async function prepararEmpresa(empresa: Empresa, metodo: Metodo) {
     fechaFin: '2026-12-31',
     idPersona: personaId,
   });
-  expect(periodo.status).toBe(201);
+  esperarStatus(periodo, 201);
 
   const cfg = await api.put(
     '/api/periodos-contables/configuracion/metodo-valoracion',
@@ -38,19 +38,19 @@ export async function prepararEmpresa(empresa: Empresa, metodo: Metodo) {
       metodoValoracion: metodo,
     },
   );
-  expect(cfg.status).toBe(200);
+  esperarStatus(cfg, 200);
 
   const almacen = await api.post('/api/almacenes', {
     nombre: 'Almacén Central',
     ubicacion: 'Av. Industrial 123, Lima',
   });
-  expect(almacen.status).toBe(201);
+  esperarStatus(almacen, 201);
 
   const categoria = await api.post('/api/categorias', {
     nombre: 'Abarrotes',
     tipo: 'producto',
   });
-  expect(categoria.status).toBe(201);
+  esperarStatus(categoria, 201);
 
   correlativoDoc += 1;
   const proveedor = await api.post('/api/entidades', {
@@ -61,7 +61,7 @@ export async function prepararEmpresa(empresa: Empresa, metodo: Metodo) {
     razonSocial: 'Proveedor de Pruebas S.A.C.',
     direccion: 'Av. Proveedores 456, Lima',
   });
-  expect(proveedor.status).toBe(201);
+  esperarStatus(proveedor, 201);
 
   correlativoDoc += 1;
   const cliente = await api.post('/api/entidades', {
@@ -72,7 +72,7 @@ export async function prepararEmpresa(empresa: Empresa, metodo: Metodo) {
     razonSocial: 'Cliente de Pruebas S.A.C.',
     direccion: 'Av. Clientes 789, Lima',
   });
-  expect(cliente.status).toBe(201);
+  esperarStatus(cliente, 201);
 
   return {
     ...(await catalogo(api)),
@@ -85,7 +85,8 @@ export async function prepararEmpresa(empresa: Empresa, metodo: Metodo) {
 
 export type Escenario = Awaited<ReturnType<typeof prepararEmpresa>>;
 
-let codigoProducto = 1;
+// Base distinta por archivo de test: hoy el código de producto es único global
+let codigoProducto = Number(String(Date.now()).slice(-6)) * 100;
 
 /** Crea un producto y su inventario en el almacén del escenario. */
 export async function crearInventario(
@@ -101,13 +102,13 @@ export async function crearInventario(
     unidadMedida: 'unidad',
     codigo: `TST-${codigoProducto}`,
   });
-  expect(producto.status).toBe(201);
+  esperarStatus(producto, 201);
 
   const inventario = await api.post('/api/inventario', {
     idAlmacen: esc.idAlmacen,
     idProducto: idOf(producto.body),
   });
-  expect(inventario.status).toBe(201);
+  esperarStatus(inventario, 201);
   return idOf(inventario.body);
 }
 
@@ -183,7 +184,7 @@ export async function kardex(empresa: Empresa, idInventario: number) {
   const res = await empresa.api.get(
     `/api/kardex?personaId=${empresa.personaId}&idInventario=${idInventario}&fechaInicio=2026-01-01&fechaFin=2026-12-31`,
   );
-  expect(res.status).toBe(200);
+  esperarStatus(res, 200);
   return res.body;
 }
 
@@ -192,6 +193,6 @@ export async function stockActual(
   idInventario: number,
 ): Promise<number> {
   const res = await api.get(`/api/inventario/${idInventario}`);
-  expect(res.status).toBe(200);
+  esperarStatus(res, 200);
   return Number(res.body.stockActual ?? res.body.data?.stockActual);
 }

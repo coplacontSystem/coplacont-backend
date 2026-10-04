@@ -24,7 +24,6 @@ export class CreateTransferenciaDto {
   idAlmacenDestino!: number;
 
   @IsDateString()
-  @Type(() => Date)
   fechaEmision!: Date;
 
   @IsEnum(Moneda)
@@ -44,7 +43,6 @@ export class CreateTransferenciaDto {
 
   @IsOptional()
   @IsDateString()
-  @Type(() => Date)
   fechaVencimiento?: Date;
 
   @IsArray()
