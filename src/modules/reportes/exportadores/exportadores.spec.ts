@@ -125,7 +125,12 @@ describe('exportador PDF', () => {
     doc.secciones[0].columnas = [
       { clave: 'detalle', titulo: 'Detalle', tipo: 'texto', ancho: 1.6 },
       ...['Entradas', 'Salidas'].flatMap((g) => [
-        { clave: 'cantidad', titulo: 'Cantidad', tipo: 'cantidad' as const, grupo: g },
+        {
+          clave: 'cantidad',
+          titulo: 'Cantidad',
+          tipo: 'cantidad' as const,
+          grupo: g,
+        },
         { clave: 'total', titulo: 'Total', tipo: 'moneda' as const, grupo: g },
       ]),
     ];
