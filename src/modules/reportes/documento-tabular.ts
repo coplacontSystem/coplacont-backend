@@ -52,6 +52,12 @@ export interface DocumentoTabular {
   /** Datos del encabezado: período, producto, almacén, método... */
   datos?: { etiqueta: string; valor: string }[];
   secciones: Seccion[];
+  /**
+   * Solo las tablas, sin encabezado del reporte (título, empresa, datos): la
+   * cabecera de columnas queda en la fila 1. Para plantillas que se vuelven a
+   * importar (XLSX y CSV; el PDF lo ignora).
+   */
+  soloTabla?: boolean;
   /** PDF: horizontal para tablas anchas (kardex). */
   orientacion?: 'vertical' | 'horizontal';
   generado?: Date;

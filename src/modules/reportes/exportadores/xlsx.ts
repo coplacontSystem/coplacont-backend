@@ -64,30 +64,7 @@ function escribirSeccion(
   const { columnas } = seccion;
   const ancho = Math.max(columnas.length, 2);
 
-  // Encabezado del reporte
-  const titulo = hoja.addRow([doc.titulo]);
-  titulo.font = { bold: true, size: 14 };
-  hoja.mergeCells(titulo.number, 1, titulo.number, ancho);
-  const datos = [
-    ...(doc.empresa
-      ? [
-          { etiqueta: 'Empresa', valor: doc.empresa.razonSocial },
-          ...(doc.empresa.ruc
-            ? [{ etiqueta: 'RUC', valor: doc.empresa.ruc }]
-            : []),
-        ]
-      : []),
-    ...(doc.datos ?? []),
-  ];
-  for (const d of datos) {
-    const fila = hoja.addRow([d.etiqueta, d.valor]);
-    fila.getCell(1).font = { bold: true };
-  }
-  if (seccion.titulo) {
-    hoja.addRow([]);
-    hoja.addRow([seccion.titulo]).font = { bold: true };
-  }
-  hoja.addRow([]);
+  if (!doc.soloTabla) escribirEncabezado(hoja, doc, seccion, ancho);
 
   // Cabeceras: fila de grupos (combinando celdas contiguas) y fila de columnas
   const filasCabecera: ExcelJS.Row[] = [];
@@ -163,4 +140,36 @@ function escribirSeccion(
   });
   // Las cabeceras quedan fijas al desplazarse
   hoja.views = [{ state: 'frozen', ySplit: primeraFilaDatos - 1 }];
+}
+
+/** Título, empresa, datos y título de la sección, sobre la tabla. */
+function escribirEncabezado(
+  hoja: ExcelJS.Worksheet,
+  doc: DocumentoTabular,
+  seccion: Seccion,
+  ancho: number,
+): void {
+  const titulo = hoja.addRow([doc.titulo]);
+  titulo.font = { bold: true, size: 14 };
+  hoja.mergeCells(titulo.number, 1, titulo.number, ancho);
+  const datos = [
+    ...(doc.empresa
+      ? [
+          { etiqueta: 'Empresa', valor: doc.empresa.razonSocial },
+          ...(doc.empresa.ruc
+            ? [{ etiqueta: 'RUC', valor: doc.empresa.ruc }]
+            : []),
+        ]
+      : []),
+    ...(doc.datos ?? []),
+  ];
+  for (const d of datos) {
+    const fila = hoja.addRow([d.etiqueta, d.valor]);
+    fila.getCell(1).font = { bold: true };
+  }
+  if (seccion.titulo) {
+    hoja.addRow([]);
+    hoja.addRow([seccion.titulo]).font = { bold: true };
+  }
+  hoja.addRow([]);
 }

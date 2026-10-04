@@ -125,6 +125,44 @@ describe('Reportes (e2e)', () => {
     expect(malFiltro.status).toBe(400);
   });
 
+  it('descarga la plantilla de compras con la cabecera en la fila 1', async () => {
+    const res = await empresa.api.descargar(
+      '/api/reportes/plantilla-compras?formato=xlsx',
+    );
+    esperarStatus(res, 200);
+    expect(res.headers['content-disposition']).toContain(
+      'plantilla_compras_coplacont.xlsx',
+    );
+    const libro = new ExcelJS.Workbook();
+    await libro.xlsx.load(res.body as ExcelJS.Buffer);
+    expect(libro.worksheets.map((h) => h.name)).toEqual([
+      'Compras',
+      'Instrucciones',
+    ]);
+    const hoja = libro.getWorksheet('Compras')!;
+    const cabecera = (hoja.getRow(1).values as unknown[]).slice(1);
+    expect(cabecera.slice(0, 3)).toEqual([
+      'Tipo comprobante (Tabla 10)',
+      'Serie',
+      'Número',
+    ]);
+    expect(cabecera).toContain('Código producto');
+    const ejemplo = hoja.getRow(2);
+    // Textos con ceros a la izquierda se conservan; fechas y montos son reales
+    expect(ejemplo.getCell(1).value).toBe('01');
+    expect(ejemplo.getCell(3).value).toBe('00001234');
+    expect(ejemplo.getCell(4).value).toBeInstanceOf(Date);
+    expect(ejemplo.getCell(11).value).toBe(10);
+
+    const csv = await empresa.api.get(
+      '/api/reportes/plantilla-ventas?formato=csv',
+    );
+    esperarStatus(csv, 200);
+    expect(csv.text.replace('\uFEFF', '').split('\r\n')[0]).toMatch(
+      /^Tipo comprobante \(Tabla 10\);Serie;Número;.*RUC o DNI cliente/,
+    );
+  });
+
   it('exige autenticación', async () => {
     const res = await request(app.getHttpServer()).get(
       '/api/reportes/prueba?formato=csv&año=2026',

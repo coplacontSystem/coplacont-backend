@@ -32,18 +32,18 @@ const linea = (valores: string[]) => valores.join(SEPARADOR);
 
 /** CSV con encabezado del reporte y una tabla por sección, separadas por una línea en blanco. */
 export function exportarCsv(doc: DocumentoTabular): Buffer {
-  const lineas: string[] = [texto(doc.titulo)];
-  if (doc.empresa) {
+  const lineas: string[] = doc.soloTabla ? [] : [texto(doc.titulo)];
+  if (doc.empresa && !doc.soloTabla) {
     lineas.push(linea(['Empresa', texto(doc.empresa.razonSocial)]));
     if (doc.empresa.ruc) lineas.push(linea(['RUC', texto(doc.empresa.ruc)]));
   }
-  for (const d of doc.datos ?? []) {
+  for (const d of doc.soloTabla ? [] : (doc.datos ?? [])) {
     lineas.push(linea([texto(d.etiqueta), texto(d.valor)]));
   }
 
   for (const seccion of doc.secciones) {
-    lineas.push('');
-    if (seccion.titulo) lineas.push(texto(seccion.titulo));
+    if (lineas.length) lineas.push('');
+    if (seccion.titulo && !doc.soloTabla) lineas.push(texto(seccion.titulo));
     const { columnas } = seccion;
     if (columnas.some((c) => c.grupo)) {
       // El grupo solo en su primera columna (equivale a las celdas combinadas del XLSX)

@@ -1,3 +1,5 @@
+import { ReportesModule } from '../reportes/reportes.module';
+import { PlantillasReportes } from './reportes/plantillas.reportes';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Comprobante } from './entities/comprobante';
@@ -39,6 +41,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     InventarioModule,
     UserModule,
     PeriodosModule,
+    ReportesModule,
   ],
   controllers: [
     ComprobanteController,
@@ -47,6 +50,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     TransferenciasController,
   ],
   providers: [
+    PlantillasReportes,
     ComprobanteService,
     ComprasService,
     VentasService,
