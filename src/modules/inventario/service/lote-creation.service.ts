@@ -5,8 +5,7 @@ import { InventarioLote } from '../entities/inventario-lote.entity';
 import { Inventario } from '../entities/inventario.entity';
 import { ComprobanteDetalle } from '../../comprobantes/entities/comprobante-detalle';
 import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
-import { StockCalculationService } from './stock-calculation.service';
-import { StockCacheService } from './stock-cache.service';
+import { ValoracionService } from '../valoracion/valoracion.service';
 
 /**
  * Servicio simplificado para creación de lotes sin campos calculados
@@ -19,12 +18,15 @@ export class LoteCreationService {
     private readonly loteRepository: Repository<InventarioLote>,
     @InjectRepository(Inventario)
     private readonly inventarioRepository: Repository<Inventario>,
-    private readonly stockCalculationService: StockCalculationService,
-    private readonly stockCacheService: StockCacheService,
+    private readonly valoracion: ValoracionService,
   ) {}
 
   /**
-   * Procesar lotes según el tipo de operación del comprobante
+   * Procesar lotes según el tipo de operación del comprobante.
+   * - Entrada: crea un lote por línea, al costo en soles (`precio × factorCosto`)
+   *   o al de `costosEntrada` por inventario (devolución de una venta).
+   * - Salida: costo y lotes consumidos según el motor de valoración; valida que
+   *   haya stock en la fecha y después (registros retroactivos).
    */
   async procesarLotesComprobante(
     detalles: ComprobanteDetalle[],
@@ -32,83 +34,54 @@ export class LoteCreationService {
     metodoValoracion: MetodoValoracion = MetodoValoracion.PROMEDIO,
     fechaEmision: Date,
     factorCosto = 1,
+    costosEntrada?: Map<number, number>,
   ): Promise<{
     costoUnitario: number[];
     lotes: { idLote: number; costoUnitarioDeLote: number; cantidad: number }[];
   }> {
+    if (modo === 'SALIDA') {
+      const costeadas = await this.valoracion.costearSalidas(
+        detalles.map((d) => ({
+          idInventario: Number(d.inventario.id),
+          cantidad: Number(d.cantidad),
+        })),
+        fechaEmision,
+        metodoValoracion,
+      );
+      return {
+        costoUnitario: costeadas.map((c) => c.costoUnitario),
+        lotes: costeadas.flatMap((c) =>
+          c.consumos.map((consumo) => ({
+            idLote: consumo.idLote,
+            costoUnitarioDeLote: consumo.costoUnitario,
+            cantidad: consumo.cantidad,
+          })),
+        ),
+      };
+    }
+
     const costosUnitariosDeDetalles: number[] = [];
     const lotesUsados: {
       idLote: number;
       costoUnitarioDeLote: number;
       cantidad: number;
     }[] = [];
-    // Consumo acumulado por lote entre las líneas de este mismo comprobante
-    const consumidoPorLote = new Map<number, number>();
-
-    // Stock "a la fecha": todo lo registrado hasta el final del día de emisión
-    const fechaRef = new Date(
-      Date.UTC(
-        fechaEmision.getUTCFullYear(),
-        fechaEmision.getUTCMonth(),
-        fechaEmision.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      ),
-    );
-
     for (const detalle of detalles) {
-      if (modo === 'ENTRADA') {
-        // El costo del lote se guarda siempre en soles (factorCosto = tipo de cambio)
-        const costo = Number(detalle.precioUnitario) * factorCosto;
-        const loteCreado = await this.registrarLoteCompra(
-          detalle,
-          fechaEmision,
-          costo,
-        );
-        costosUnitariosDeDetalles.push(costo);
-        lotesUsados.push({
-          idLote: loteCreado.id,
-          costoUnitarioDeLote: costo,
-          cantidad: Number(detalle.cantidad),
-        });
-        continue;
-      }
-
-      // Salida: costo según el método de valoración
-      const costoUnitario =
-        await this.stockCalculationService.calcularCostoUnitarioVenta(
-          detalle.inventario.id,
-          Number(detalle.cantidad),
-          metodoValoracion,
-          fechaRef,
-          consumidoPorLote,
-        );
-      costosUnitariosDeDetalles.push(costoUnitario);
-
-      // El stock físico siempre se descuenta de lotes reales por FIFO,
-      // aunque el costo se calcule por promedio
-      const consumoFIFO =
-        await this.stockCalculationService.calcularConsumoFIFO(
-          detalle.inventario.id,
-          Number(detalle.cantidad),
-          fechaRef,
-          consumidoPorLote,
-        );
-      for (const consumo of consumoFIFO) {
-        consumidoPorLote.set(
-          consumo.idLote,
-          (consumidoPorLote.get(consumo.idLote) ?? 0) + consumo.cantidad,
-        );
-        lotesUsados.push({
-          idLote: consumo.idLote,
-          costoUnitarioDeLote: consumo.costoUnitario,
-          cantidad: consumo.cantidad,
-        });
-      }
-
-      this.stockCacheService.invalidateInventario(detalle.inventario.id);
+      // El costo del lote se guarda siempre en soles (factorCosto = tipo de cambio)
+      const costo =
+        costosEntrada?.get(Number(detalle.inventario.id)) ??
+        Number(detalle.precioUnitario) * factorCosto;
+      const loteCreado = await this.registrarLoteCompra(
+        detalle,
+        fechaEmision,
+        costo,
+      );
+      costosUnitariosDeDetalles.push(costo);
+      lotesUsados.push({
+        idLote: loteCreado.id,
+        costoUnitarioDeLote: costo,
+        cantidad: Number(detalle.cantidad),
+      });
     }
 
     return {
@@ -174,46 +147,6 @@ export class LoteCreationService {
 
     const loteGuardado = await this.loteRepository.save(lote);
 
-    // Invalidar caché después de la compra
-    this.stockCacheService.invalidateInventario(inventario.id);
-
     return loteGuardado;
-  }
-
-  /**
-   * Validar que los lotes se crearon correctamente para compras
-   */
-  async validarLotesCompra(detalles: ComprobanteDetalle[]): Promise<boolean> {
-    try {
-      for (const detalle of detalles) {
-        // Buscar el lote más reciente creado (por ID, no por fecha de ingreso)
-        // para evitar problemas con compras retroactivas
-        const loteReciente = await this.loteRepository.findOne({
-          where: { inventario: { id: detalle.inventario.id } },
-          order: { id: 'DESC' },
-          relations: ['inventario'],
-        });
-
-        if (!loteReciente) {
-          return false;
-        }
-
-        // Validar datos del lote: aceptamos dos modalidades
-        // 1) cantidadInicial igual a cantidad del detalle (modo tradicional)
-        // 2) cantidadInicial = 0 y costo unitario correcto (modo movimiento-only)
-        const cantidadInicialValida =
-          Number(loteReciente.cantidadInicial) === Number(detalle.cantidad) ||
-          Number(loteReciente.cantidadInicial) === 0;
-        const costoUnitarioValido =
-          Number(loteReciente.costoUnitario) === Number(detalle.precioUnitario);
-        if (!cantidadInicialValida || !costoUnitarioValido) {
-          return false;
-        }
-      }
-
-      return true;
-    } catch {
-      return false;
-    }
   }
 }

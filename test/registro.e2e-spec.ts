@@ -271,6 +271,12 @@ describe('Registro de comprobantes (e2e)', () => {
       });
       esperarStatus(res, 201);
       expect(await stockActual(api(), inv)).toBe(7);
+      // Reingresa al costo con que salió (S/ 10), no al precio de venta (S/ 20)
+      const k = await kardex(empresa, inv);
+      const devolucion = k.movimientos[k.movimientos.length - 1];
+      expect(devolucion.tipo).toBe('Entrada');
+      expect(devolucion.costoUnitario).toBeCloseTo(10, 4);
+      expect(Number(k.costoFinal)).toBeCloseTo(70, 4);
     });
   });
 
@@ -390,6 +396,16 @@ describe('Registro de comprobantes (e2e)', () => {
 
       const k = await kardex(empresa, invDestino);
       expect(k.movimientos[0].costoUnitario).toBeCloseTo(10, 4);
+
+      // Para la empresa una transferencia no es compra ni costo de ventas
+      const reporte = await api().get(
+        `/api/costo-venta/reporte?año=2026&idProducto=${idProducto}`,
+      );
+      esperarStatus(reporte, 200);
+      const marzo = reporte.body.datosMensuales.find((d: any) => d.mes === 3);
+      expect(Number(marzo.comprasTotales)).toBeCloseTo(100, 2);
+      expect(Number(marzo.salidasTotales)).toBeCloseTo(0, 2);
+      expect(Number(marzo.inventarioFinal)).toBeCloseTo(100, 2);
 
       const lista = await api().get('/api/transferencias');
       esperarStatus(lista, 200);

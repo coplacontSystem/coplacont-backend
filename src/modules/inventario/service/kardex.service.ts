@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { KardexRequestDto, KardexResponseDto } from '../dto';
 import { TipoMovimiento } from 'src/modules/movimientos/enum/tipo-movimiento.enum';
 import { plainToInstance } from 'class-transformer';
@@ -12,7 +12,6 @@ import { PeriodoContableService } from 'src/modules/periodos/service';
 
 @Injectable()
 export class KardexService {
-  private readonly logger = new Logger(KardexService.name);
   constructor(
     private readonly inventarioRepository: InventarioRepository,
     private readonly kardexCalculationService: KardexCalculationService,
@@ -31,14 +30,6 @@ export class KardexService {
     // Convertir fechas string a Date si están presentes
     const fechaInicioDate = fechaInicio ? new Date(fechaInicio) : undefined;
     const fechaFinDate = fechaFin ? new Date(fechaFin) : undefined;
-
-    // Logs de entrada y parsing de fechas
-    this.logger.log(
-      `🔍 [KARDEX-TRACE] Request idInventario=${idInventario} personaId=${personaId ?? 'null'} fechaInicioRaw=${fechaInicio ?? 'null'} fechaFinRaw=${fechaFin ?? 'null'}`,
-    );
-    this.logger.log(
-      `🔍 [KARDEX-TRACE] Parsed inicioISO=${fechaInicioDate ? fechaInicioDate.toISOString() : 'null'} inicioLocal=${fechaInicioDate ? fechaInicioDate.toString() : 'null'} inicioOffset=${fechaInicioDate ? fechaInicioDate.getTimezoneOffset() : 'n/a'} finISO=${fechaFinDate ? fechaFinDate.toISOString() : 'null'} finLocal=${fechaFinDate ? fechaFinDate.toString() : 'null'} finOffset=${fechaFinDate ? fechaFinDate.getTimezoneOffset() : 'n/a'}`,
-    );
 
     // Obtener información del inventario
     const inventario = await this.inventarioRepository.findById(idInventario);
@@ -77,16 +68,6 @@ export class KardexService {
         metodoValoracion,
       );
 
-    // Log de conteo y rango de fechas en movimientos calculados
-    const totalMov = kardexResult?.movimientos?.length ?? 0;
-    const firstDate =
-      totalMov > 0 ? kardexResult!.movimientos[0].fecha : undefined;
-    const lastDate =
-      totalMov > 0 ? kardexResult!.movimientos[totalMov - 1].fecha : undefined;
-    this.logger.log(
-      `✅ [KARDEX-TRACE] Movimientos=${totalMov} firstISO=${firstDate ? firstDate.toISOString() : 'null'} lastISO=${lastDate ? lastDate.toISOString() : 'null'}`,
-    );
-
     if (!kardexResult) {
       return {
         producto: inventario.producto?.nombre || 'Producto no encontrado',
@@ -102,11 +83,7 @@ export class KardexService {
 
     // Convertir movimientos de KardexCalculationService al formato esperado por el DTO
     const movimientosFormateados = kardexResult.movimientos.map(
-      (mov: KardexMovement, idx) => {
-        const f = mov.fecha;
-        this.logger.log(
-          `🧭 [KARDEX-TRACE] Mov[${idx}] fechaISO=${f.toISOString()} fechaLocal=${f.toString()} offset=${f.getTimezoneOffset()} formatted=${this.formatDate(f)} tipo=${mov.tipoMovimiento} comprob=${mov.tipoComprobante ?? ''} nro=${mov.numeroComprobante ?? ''}`,
-        );
+      (mov: KardexMovement) => {
         const movimientoDto: {
           fecha: string;
           tipo: 'Entrada' | 'Salida';

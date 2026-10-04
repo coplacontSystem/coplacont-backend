@@ -1,8 +1,7 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventarioLote } from '../entities/inventario-lote.entity';
-import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
 
 /**
  * Interfaz para el resultado del cálculo de stock de lote
@@ -24,16 +23,6 @@ export interface InventarioStockResult {
   stockActual: number;
   costoPromedioActual: number;
   lotes: LoteStockResult[];
-}
-
-/**
- * Interfaz para lotes disponibles para FIFO
- */
-export interface LoteDisponible {
-  idLote: number;
-  cantidadDisponible: number;
-  costoUnitario: number;
-  fechaIngreso: Date;
 }
 
 /**
@@ -258,169 +247,5 @@ export class StockCalculationService {
     }
 
     return resultado;
-  }
-
-  /**
-   * Obtiene los lotes disponibles para consumo FIFO
-   * @param idInventario ID del inventario
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns Lotes ordenados por FIFO con stock disponible
-   */
-  async obtenerLotesDisponiblesFIFO(
-    idInventario: number,
-    fechaHasta?: Date,
-  ): Promise<LoteDisponible[]> {
-    const stockInventario = await this.calcularStockInventario(
-      idInventario,
-      fechaHasta,
-    );
-    if (!stockInventario) {
-      return [];
-    }
-
-    const lotesDisponibles = stockInventario.lotes
-      .filter((lote) => lote.cantidadActual > 0)
-      .map((lote) => ({
-        idLote: lote.idLote,
-        cantidadDisponible: lote.cantidadActual,
-        costoUnitario: lote.costoUnitario,
-        fechaIngreso: lote.fechaIngreso,
-      }))
-      .sort((a, b) => a.fechaIngreso.getTime() - b.fechaIngreso.getTime());
-
-    return lotesDisponibles;
-  }
-
-  /**
-   * Calcula el costo promedio ponderado de un inventario
-   * @param idInventario ID del inventario
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns Costo promedio ponderado
-   */
-  async calcularCostoPromedio(
-    idInventario: number,
-    fechaHasta?: Date,
-  ): Promise<number> {
-    const stockInventario = await this.calcularStockInventario(
-      idInventario,
-      fechaHasta,
-    );
-    return stockInventario?.costoPromedioActual || 0;
-  }
-
-  /**
-   * Verifica si hay stock suficiente para una operación
-   * @param idInventario ID del inventario
-   * @param cantidadRequerida Cantidad requerida
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns True si hay stock suficiente
-   */
-  async verificarStockSuficiente(
-    idInventario: number,
-    cantidadRequerida: number,
-    fechaHasta?: Date,
-  ): Promise<boolean> {
-    const stockInventario = await this.calcularStockInventario(
-      idInventario,
-      fechaHasta,
-    );
-    return stockInventario
-      ? stockInventario.stockActual >= cantidadRequerida
-      : false;
-  }
-
-  /**
-   * Calcula el consumo de lotes para una cantidad específica usando FIFO
-   * @param idInventario ID del inventario
-   * @param cantidadAConsumir Cantidad a consumir
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns Detalle del consumo por lotes
-   */
-  async calcularConsumoFIFO(
-    idInventario: number,
-    cantidadAConsumir: number,
-    fechaHasta?: Date,
-    yaConsumido?: Map<number, number>,
-  ): Promise<{ idLote: number; cantidad: number; costoUnitario: number }[]> {
-    // Descuenta lo que ya consumieron otras líneas del mismo comprobante
-    const lotesDisponibles = (
-      await this.obtenerLotesDisponiblesFIFO(idInventario, fechaHasta)
-    )
-      .map((l) => ({
-        ...l,
-        cantidadDisponible:
-          l.cantidadDisponible - (yaConsumido?.get(l.idLote) ?? 0),
-      }))
-      .filter((l) => l.cantidadDisponible > 1e-9);
-
-    const consumo: {
-      idLote: number;
-      cantidad: number;
-      costoUnitario: number;
-    }[] = [];
-    let cantidadRestante = cantidadAConsumir;
-
-    for (const lote of lotesDisponibles) {
-      if (cantidadRestante <= 0) break;
-
-      const cantidadDelLote = Math.min(
-        cantidadRestante,
-        lote.cantidadDisponible,
-      );
-
-      consumo.push({
-        idLote: lote.idLote,
-        cantidad: cantidadDelLote,
-        costoUnitario: lote.costoUnitario,
-      });
-
-      cantidadRestante -= cantidadDelLote;
-    }
-
-    if (cantidadRestante > 0) {
-      throw new BadRequestException(
-        `Stock insuficiente. Faltante: ${cantidadRestante}`,
-      );
-    }
-
-    return consumo;
-  }
-
-  /**
-   * Calcula el costo unitario para una venta usando el método especificado
-   * @param idInventario ID del inventario
-   * @param cantidadVenta Cantidad de la venta
-   * @param metodoValoracion Método de valoración (FIFO o PROMEDIO)
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns Costo unitario calculado
-   */
-  async calcularCostoUnitarioVenta(
-    idInventario: number,
-    cantidadVenta: number,
-    metodoValoracion: MetodoValoracion,
-    fechaHasta?: Date,
-    yaConsumido?: Map<number, number>,
-  ): Promise<number> {
-    if (metodoValoracion === MetodoValoracion.PROMEDIO) {
-      return await this.calcularCostoPromedio(idInventario, fechaHasta);
-    } else {
-      // FIFO: calcular costo promedio ponderado de los lotes que se van a consumir
-      const consumo = await this.calcularConsumoFIFO(
-        idInventario,
-        cantidadVenta,
-        fechaHasta,
-        yaConsumido,
-      );
-
-      let costoTotal = 0;
-      let cantidadTotal = 0;
-
-      for (const item of consumo) {
-        costoTotal += item.cantidad * item.costoUnitario;
-        cantidadTotal += item.cantidad;
-      }
-
-      return cantidadTotal > 0 ? costoTotal / cantidadTotal : 0;
-    }
   }
 }

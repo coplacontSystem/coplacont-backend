@@ -1,6 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { OPERACION } from 'src/common/catalogo.service';
+import { PeriodoContableService } from 'src/modules/periodos/service';
+import { diaDe } from '../valoracion/motor-valoracion';
+import {
+  InventarioValorizado,
+  ValoracionService,
+} from '../valoracion/valoracion.service';
 
 export interface CostoVentaMensualData {
   mes: number;
@@ -39,117 +46,93 @@ export class CostoVentaRepository {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly valoracion: ValoracionService,
+    private readonly periodoContableService: PeriodoContableService,
   ) {}
 
   /**
-   * Movimientos de inventario de la empresa valorizados al costo (en soles):
-   * entradas = cantidad × costo del lote; salidas = Σ cantidad × costo de los
-   * lotes consumidos. Incluye lotes de inventario inicial sin movimientos.
-   * Devuelve un CTE `mov(id_inventario, fecha, tipo, valor)` y sus parámetros.
+   * Inventarios de la empresa (con filtros) valorizados por el motor único, con
+   * el método de valoración de la empresa: los importes son los mismos del kardex.
    */
-  private movimientosValorizados(filtros: {
-    personaId: number;
-    idAlmacen?: number;
-    idProducto?: number;
-  }): { cte: string; params: unknown[] } {
-    const params: unknown[] = [filtros.personaId];
-    let filtro = 'a.id_persona = $1';
-    if (filtros.idAlmacen) {
-      params.push(filtros.idAlmacen);
-      filtro += ` AND a.id = $${params.length}`;
+  private async valorizados(filtros: CostoVentaFiltros): Promise<{
+    inventarios: Awaited<
+      ReturnType<CostoVentaRepository['getInventariosInfo']>
+    >;
+    valorizados: Map<number, InventarioValorizado>;
+  }> {
+    const inventarios = await this.getInventariosInfo(filtros);
+    const metodo = (
+      await this.periodoContableService.obtenerConfiguracion(filtros.personaId)
+    ).metodoCalculoCosto;
+    const valorizados = await this.valoracion.valorizarInventarios(
+      inventarios.map((i) => i.idInventario),
+      metodo,
+    );
+    return { inventarios, valorizados };
+  }
+
+  /** Valor del inventario al final del día `dia` ('YYYY-MM-DD'). */
+  private static valorAl(inv: InventarioValorizado, dia: string): number {
+    let valor = 0;
+    for (const linea of inv.resultado.lineas) {
+      if (diaDe(linea.fecha) > dia) break;
+      valor = linea.saldoValor;
     }
-    if (filtros.idProducto) {
-      params.push(filtros.idProducto);
-      filtro += ` AND i.id_producto = $${params.length}`;
+    return valor;
+  }
+
+  private static esTransferencia(codigoOperacion: string | null): boolean {
+    return (
+      codigoOperacion === OPERACION.TRANSFERENCIA_INGRESO ||
+      codigoOperacion === OPERACION.TRANSFERENCIA_SALIDA
+    );
+  }
+
+  /**
+   * Compras (entradas), salidas al costo e inventario final de cada mes del año.
+   * Sin filtro de almacén se excluyen las transferencias entre almacenes: para la
+   * empresa no son compras ni costo de ventas (la salida y la entrada se anulan).
+   */
+  async getCostoVentaAnual(
+    filtros: CostoVentaFiltros,
+  ): Promise<CostoVentaMensualData[]> {
+    const { valorizados } = await this.valorizados(filtros);
+    const año = String(filtros.año);
+    const resultado: CostoVentaMensualData[] = Array.from(
+      { length: 12 },
+      (_, i) => ({
+        mes: i + 1,
+        comprasTotales: 0,
+        salidasTotales: 0,
+        inventarioFinal: 0,
+      }),
+    );
+
+    for (const inv of valorizados.values()) {
+      inv.resultado.lineas.forEach((linea, i) => {
+        const dia = diaDe(linea.fecha);
+        if (dia.slice(0, 4) !== año) return;
+        if (
+          !filtros.idAlmacen &&
+          CostoVentaRepository.esTransferencia(
+            inv.movimientos[i].codigoOperacion,
+          )
+        ) {
+          return;
+        }
+        const mes = resultado[Number(dia.slice(5, 7)) - 1];
+        if (linea.tipo === 'ENTRADA') mes.comprasTotales += linea.costoTotal;
+        else mes.salidasTotales += linea.costoTotal;
+      });
+      for (const mes of resultado) {
+        const ultimoDia = new Date(Date.UTC(filtros.año, mes.mes, 0));
+        mes.inventarioFinal += CostoVentaRepository.valorAl(
+          inv,
+          diaDe(ultimoDia),
+        );
+      }
     }
-    const cte = `
-      WITH mov AS (
-        SELECT md.id_inventario, m.fecha, m.tipo::text AS tipo,
-               CASE
-                 WHEN m.tipo = 'ENTRADA' THEN md.cantidad * COALESCE(l."costoUnitario", 0)
-                 WHEN m.tipo = 'SALIDA' THEN COALESCE((
-                   SELECT SUM(ds.cantidad * ds.costo_unitario_de_lote)
-                     FROM detalle_salidas ds
-                    WHERE ds.id_movimiento_detalle = md.id), 0)
-                 ELSE 0
-               END AS valor
-          FROM movimiento_detalles md
-          JOIN movimientos m ON m.id = md.id_movimiento AND m.estado = 'PROCESADO'
-          JOIN inventario i ON i.id = md.id_inventario
-          JOIN almacen a ON a.id = i.id_almacen
-          LEFT JOIN inventario_lote l ON l.id = md.id_lote
-         WHERE ${filtro}
-        UNION ALL
-        SELECT l.id_inventario, l."fechaIngreso"::timestamp, 'ENTRADA',
-               l."cantidadInicial" * l."costoUnitario"
-          FROM inventario_lote l
-          JOIN inventario i ON i.id = l.id_inventario
-          JOIN almacen a ON a.id = i.id_almacen
-         WHERE ${filtro} AND l."cantidadInicial" > 0
-           AND NOT EXISTS (SELECT 1 FROM movimiento_detalles x WHERE x.id_lote = l.id)
-      )`;
-    return { cte, params };
-  }
-
-  /**
-   * Compras (entradas) del año por mes, al costo
-   */
-  async getComprasMensuales(
-    filtros: CostoVentaFiltros,
-  ): Promise<{ mes: number; total: number }[]> {
-    return this.totalesMensuales(filtros, 'ENTRADA');
-  }
-
-  /**
-   * Salidas del año por mes, al costo de los lotes consumidos
-   */
-  async getSalidasMensuales(
-    filtros: CostoVentaFiltros,
-  ): Promise<{ mes: number; total: number }[]> {
-    return this.totalesMensuales(filtros, 'SALIDA');
-  }
-
-  private async totalesMensuales(
-    filtros: CostoVentaFiltros,
-    tipo: 'ENTRADA' | 'SALIDA',
-  ): Promise<{ mes: number; total: number }[]> {
-    const { cte, params } = this.movimientosValorizados(filtros);
-    const result: Array<{ mes: string | number; total: string | number }> =
-      await this.dataSource.query(
-        `${cte}
-         SELECT EXTRACT(MONTH FROM fecha) AS mes, COALESCE(SUM(valor), 0) AS total
-           FROM mov
-          WHERE tipo = $${params.length + 1}
-            AND EXTRACT(YEAR FROM fecha) = $${params.length + 2}
-          GROUP BY 1
-          ORDER BY 1`,
-        [...params, tipo, filtros.año],
-      );
-    return result.map((row) => ({
-      mes: parseInt(String(row.mes)),
-      total: parseFloat(String(row.total)) || 0,
-    }));
-  }
-
-  /**
-   * Valor del inventario al cierre del mes (entradas − salidas acumuladas, al costo)
-   */
-  async getInventarioFinalMensual(
-    filtros: CostoVentaFiltros,
-    mes: number,
-  ): Promise<number> {
-    // Último instante del mes
-    const fechaCorte = new Date(filtros.año, mes, 0, 23, 59, 59, 999);
-    const { cte, params } = this.movimientosValorizados(filtros);
-    const result: Array<{ total: string | number }> =
-      await this.dataSource.query(
-        `${cte}
-       SELECT COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN -valor ELSE valor END), 0) AS total
-         FROM mov
-        WHERE fecha <= $${params.length + 1}`,
-        [...params, fechaCorte],
-      );
-    return parseFloat(String(result[0]?.total)) || 0;
+    return resultado;
   }
 
   /**
@@ -174,110 +157,6 @@ export class CostoVentaRepository {
       idProducto,
     ]);
     return result[0] || null;
-  }
-
-  /**
-   * Obtiene los datos completos del reporte de costo de venta para un año
-   */
-  async getCostoVentaAnual(
-    filtros: CostoVentaFiltros,
-  ): Promise<CostoVentaMensualData[]> {
-    const meses = Array.from({ length: 12 }, (_, i) => i + 1);
-    const resultado: CostoVentaMensualData[] = [];
-
-    // Obtener compras y salidas mensuales
-    const comprasMensuales = await this.getComprasMensuales(filtros);
-    const salidasMensuales = await this.getSalidasMensuales(filtros);
-
-    // Crear mapa para acceso rápido
-    const comprasMap = new Map(comprasMensuales.map((c) => [c.mes, c.total]));
-    const salidasMap = new Map(salidasMensuales.map((s) => [s.mes, s.total]));
-
-    // Calcular datos para cada mes
-    for (const mes of meses) {
-      const comprasTotales = comprasMap.get(mes) || 0;
-      const salidasTotales = salidasMap.get(mes) || 0;
-      const inventarioFinal = await this.getInventarioFinalMensual(
-        filtros,
-        mes,
-      );
-
-      resultado.push({
-        mes,
-        comprasTotales,
-        salidasTotales,
-        inventarioFinal,
-      });
-    }
-
-    return resultado;
-  }
-
-  /**
-   * Entradas del año por inventario, al costo
-   */
-  async getEntradasPorInventario(
-    filtros: CostoVentaPorInventarioFiltros,
-  ): Promise<{ idInventario: number; total: number }[]> {
-    return this.totalesPorInventario(filtros, 'ENTRADA');
-  }
-
-  /**
-   * Salidas del año por inventario, al costo de los lotes consumidos
-   */
-  async getSalidasPorInventario(
-    filtros: CostoVentaPorInventarioFiltros,
-  ): Promise<{ idInventario: number; total: number }[]> {
-    return this.totalesPorInventario(filtros, 'SALIDA');
-  }
-
-  private async totalesPorInventario(
-    filtros: CostoVentaPorInventarioFiltros,
-    tipo: 'ENTRADA' | 'SALIDA',
-  ): Promise<{ idInventario: number; total: number }[]> {
-    const { cte, params } = this.movimientosValorizados(filtros);
-    const result: Array<{
-      idInventario: string | number;
-      total: string | number;
-    }> = await this.dataSource.query(
-      `${cte}
-       SELECT id_inventario AS "idInventario", COALESCE(SUM(valor), 0) AS total
-         FROM mov
-        WHERE tipo = $${params.length + 1}
-          AND EXTRACT(YEAR FROM fecha) = $${params.length + 2}
-        GROUP BY 1`,
-      [...params, tipo, filtros.año],
-    );
-    return result.map((row) => ({
-      idInventario: parseInt(String(row.idInventario)),
-      total: parseFloat(String(row.total)) || 0,
-    }));
-  }
-
-  /**
-   * Valor del inventario al cierre del año por inventario (al costo)
-   */
-  async getInventarioFinalPorInventario(
-    filtros: CostoVentaPorInventarioFiltros,
-  ): Promise<{ idInventario: number; total: number }[]> {
-    const fechaCorte = new Date(filtros.año, 11, 31, 23, 59, 59, 999);
-    const { cte, params } = this.movimientosValorizados(filtros);
-    const result: Array<{
-      idInventario: string | number;
-      total: string | number;
-    }> = await this.dataSource.query(
-      `${cte}
-         SELECT id_inventario AS "idInventario",
-                COALESCE(SUM(CASE WHEN tipo = 'SALIDA' THEN -valor ELSE valor END), 0) AS total
-           FROM mov
-          WHERE fecha <= $${params.length + 1}
-          GROUP BY 1`,
-      [...params, fechaCorte],
-    );
-    return result.map((row) => ({
-      idInventario: parseInt(String(row.idInventario)),
-      total: parseFloat(String(row.total)) || 0,
-    }));
   }
 
   /**
@@ -333,42 +212,34 @@ export class CostoVentaRepository {
   }
 
   /**
-   * Obtiene los datos completos del reporte de costo de venta por inventario para un año
+   * Entradas, salidas al costo e inventario al cierre del año por inventario
+   * (cada fila es un almacén, así que incluye las transferencias).
    */
   async getCostoVentaPorInventario(
     filtros: CostoVentaPorInventarioFiltros,
   ): Promise<CostoVentaPorInventarioData[]> {
-    // Obtener información de inventarios
-    const inventariosInfo = await this.getInventariosInfo(filtros);
+    const { inventarios, valorizados } = await this.valorizados(filtros);
+    const año = String(filtros.año);
 
-    if (inventariosInfo.length === 0) {
-      return [];
-    }
-
-    // Obtener datos de entradas, salidas e inventario final
-    const entradas = await this.getEntradasPorInventario(filtros);
-    const salidas = await this.getSalidasPorInventario(filtros);
-    const inventarioFinal = await this.getInventarioFinalPorInventario(filtros);
-
-    // Crear mapas para acceso rápido
-    const entradasMap = new Map(entradas.map((e) => [e.idInventario, e.total]));
-    const salidasMap = new Map(salidas.map((s) => [s.idInventario, s.total]));
-    const inventarioFinalMap = new Map(
-      inventarioFinal.map((i) => [i.idInventario, i.total]),
-    );
-
-    // Combinar todos los datos
-    const resultado: CostoVentaPorInventarioData[] = inventariosInfo.map(
-      (info) => ({
+    return inventarios.map((info) => {
+      const inv = valorizados.get(info.idInventario);
+      let entradas = 0;
+      let salidas = 0;
+      for (const linea of inv?.resultado.lineas ?? []) {
+        if (diaDe(linea.fecha).slice(0, 4) !== año) continue;
+        if (linea.tipo === 'ENTRADA') entradas += linea.costoTotal;
+        else salidas += linea.costoTotal;
+      }
+      return {
         idInventario: info.idInventario,
         nombreProducto: info.nombreProducto,
         nombreAlmacen: info.nombreAlmacen,
-        entradas: entradasMap.get(info.idInventario) || 0,
-        salidas: salidasMap.get(info.idInventario) || 0,
-        inventarioFinal: inventarioFinalMap.get(info.idInventario) || 0,
-      }),
-    );
-
-    return resultado;
+        entradas,
+        salidas,
+        inventarioFinal: inv
+          ? CostoVentaRepository.valorAl(inv, `${año}-12-31`)
+          : 0,
+      };
+    });
   }
 }

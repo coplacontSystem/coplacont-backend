@@ -4,7 +4,6 @@ import { TipoMovimiento } from 'src/modules/movimientos/enum/tipo-movimiento.enu
 import {
   bloquearInventarios,
   fechaContable,
-  validarStockEnElTiempo,
   ymd,
   ymdContable,
 } from './reglas-registro';
@@ -145,28 +144,12 @@ export class TransferenciasService {
         dto.detalles,
       );
 
-      // Serializa con otros registros sobre los mismos inventarios y
-      // verifica que el origen tenga stock en la fecha y después
+      // Serializa con otros registros sobre los mismos inventarios. El stock
+      // del origen (en la fecha y después) lo valida el motor al costear la salida.
       await bloquearInventarios(manager, [
         ...inventariosOrigen.map((i) => i.id),
         ...inventariosDestino.map((i) => i.id),
       ]);
-      const salidaPorInventario = new Map<number, number>();
-      dto.detalles.forEach((d, i) => {
-        const id = Number(inventariosOrigen[i].id);
-        salidaPorInventario.set(
-          id,
-          (salidaPorInventario.get(id) ?? 0) + Number(d.cantidad),
-        );
-      });
-      for (const [idInventario, cantidad] of salidaPorInventario) {
-        await validarStockEnElTiempo(
-          manager,
-          idInventario,
-          cantidad,
-          fechaEmision,
-        );
-      }
 
       const correlativoSalida = await this.findOrCreateCorrelativo(
         manager,

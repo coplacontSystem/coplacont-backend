@@ -1,3 +1,4 @@
+import { ValoracionService } from './valoracion/valoracion.service';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Inventario } from './entities/inventario.entity';
@@ -66,6 +67,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     InventarioRepository,
     KardexRepository,
     CostoVentaRepository,
+    ValoracionService,
   ],
   exports: [
     InventarioService,
@@ -77,6 +79,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     KardexCalculationService,
     KardexService,
     CostoVentaService,
+    ValoracionService,
     TypeOrmModule,
   ],
 })

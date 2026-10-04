@@ -128,6 +128,50 @@ describe('Flujo de inventario (e2e)', () => {
     it('el inventario muestra el stock restante', async () => {
       expect(await stockActual(promedio.api, inv)).toBe(5);
     });
+
+    // Fase 4: el reporte usa el mismo motor que el kardex (antes sumaba costos FIFO)
+    it('el Estado de Costo de Ventas coincide con el kardex', async () => {
+      const inventario = await promedio.api.get(`/api/inventario/${inv}`);
+      const res = await promedio.api.get(
+        `/api/costo-venta/reporte?año=2026&idProducto=${inventario.body.producto.id}`,
+      );
+      esperarStatus(res, 200);
+      const marzo = res.body.datosMensuales.find((d: any) => d.mes === 3);
+      expect(Number(marzo.comprasTotales)).toBeCloseTo(300, 2);
+      expect(Number(marzo.salidasTotales)).toBeCloseTo(225, 2);
+      expect(Number(marzo.inventarioFinal)).toBeCloseTo(75, 2);
+    });
+  });
+
+  describe('Kardex por rango de fechas', () => {
+    let inv: number;
+    const kardexEntre = (desde: string, hasta: string) =>
+      fifo.api.get(
+        `/api/kardex?idInventario=${inv}&fechaInicio=${desde}&fechaFin=${hasta}`,
+      );
+
+    beforeAll(async () => {
+      inv = await escenarioBase(fifo, escFifo);
+    });
+
+    it('el saldo inicial es el saldo valorizado del día anterior', async () => {
+      const res = await kardexEntre('2026-03-06', '2026-12-31');
+      esperarStatus(res, 200);
+      expect(Number(res.body.inventarioInicialCantidad)).toBe(20);
+      expect(Number(res.body.inventarioInicialCostoTotal)).toBeCloseTo(300, 4);
+      expect(res.body.movimientos.map((m: any) => m.tipo)).toEqual([
+        'Salida',
+        'Salida',
+      ]);
+      expect(Number(res.body.costoFinal)).toBeCloseTo(100, 4);
+    });
+
+    it('incluye los movimientos del último día del rango', async () => {
+      const res = await kardexEntre('2026-03-01', '2026-03-10');
+      esperarStatus(res, 200);
+      expect(res.body.movimientos).toHaveLength(4);
+      expect(Number(res.body.cantidadActual)).toBe(5);
+    });
   });
 
   describe('Operaciones retroactivas', () => {
@@ -159,6 +203,41 @@ describe('Flujo de inventario (e2e)', () => {
         { idInventario: inv, cantidad: 5, precio: 30 },
       ]);
       expect(retroactiva.status).toBe(400);
+    });
+
+    it('una venta retroactiva toma los lotes de su fecha y el kardex reordena los consumos', async () => {
+      const inv = await crearInventario(fifo.api, escFifo);
+      await comprar(fifo.api, escFifo, '2026-05-01', [
+        { idInventario: inv, cantidad: 10, precio: 10 },
+      ]);
+      await comprar(fifo.api, escFifo, '2026-05-10', [
+        { idInventario: inv, cantidad: 10, precio: 20 },
+      ]);
+      esperarStatus(
+        await vender(fifo.api, escFifo, '2026-05-20', [
+          { idInventario: inv, cantidad: 8, precio: 30 },
+        ]),
+        201,
+      );
+      esperarStatus(
+        await vender(fifo.api, escFifo, '2026-05-05', [
+          { idInventario: inv, cantidad: 5, precio: 30 },
+        ]),
+        201,
+      );
+      const k = await kardex(fifo, inv);
+      expect(
+        k.movimientos.map((m: any) => [m.tipo, m.cantidad, m.costoUnitario]),
+      ).toEqual([
+        ['Entrada', 10, 10],
+        ['Salida', 5, 10],
+        ['Entrada', 10, 20],
+        ['Salida', 5, 10],
+        ['Salida', 3, 20],
+      ]);
+      expect(Number(k.costoFinal)).toBeCloseTo(7 * 20, 4);
+      // Los lotes de la venta posterior se reasignan: el stock por lotes cuadra
+      expect(await stockActual(fifo.api, inv)).toBe(7);
     });
   });
 

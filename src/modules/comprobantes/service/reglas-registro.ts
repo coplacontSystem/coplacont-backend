@@ -5,8 +5,6 @@ import { CreateComprobanteDetalleDto } from '../dto/comprobante-detalle/create-c
 
 /** Tolerancia para comparar importes redondeados a céntimos. */
 const TOLERANCIA = 0.011;
-/** Tolerancia para comparar cantidades. */
-const EPSILON = 1e-9;
 /** Espacio de nombres de los advisory locks de inventario. */
 const LOCK_INVENTARIO = 7301;
 
@@ -131,61 +129,5 @@ export async function bloquearInventarios(
       LOCK_INVENTARIO,
       id,
     ]);
-  }
-}
-
-/**
- * Verifica que una salida en `fecha` no deje el stock negativo en ningún
- * momento: ni ese día ni después (importa en registros con fecha pasada).
- */
-export async function validarStockEnElTiempo(
-  manager: EntityManager,
-  idInventario: number,
-  cantidad: number,
-  fecha: Date,
-): Promise<void> {
-  const eventos: { fecha: Date; delta: string }[] = await manager.query(
-    `SELECT m.fecha AS fecha,
-            CASE m.tipo WHEN 'SALIDA' THEN -md.cantidad ELSE md.cantidad END AS delta,
-            m.id AS orden
-       FROM movimiento_detalles md
-       JOIN movimientos m ON m.id = md.id_movimiento
-      WHERE md.id_inventario = $1 AND m.estado = 'PROCESADO'
-     UNION ALL
-     -- Lotes con cantidad inicial y sin movimientos (inventario inicial)
-     SELECT l."fechaIngreso"::timestamp, l."cantidadInicial", 0
-       FROM inventario_lote l
-      WHERE l.id_inventario = $1 AND l."cantidadInicial" > 0
-        AND NOT EXISTS (SELECT 1 FROM movimiento_detalles x WHERE x.id_lote = l.id)
-      ORDER BY 1, 3`,
-    [idInventario],
-  );
-
-  const limite = fecha.getTime();
-  let saldo = 0;
-  let aplicada = false;
-  let minimo = Number.POSITIVE_INFINITY;
-  for (const e of eventos) {
-    if (!aplicada && new Date(e.fecha).getTime() > limite) {
-      saldo -= cantidad;
-      aplicada = true;
-      minimo = Math.min(minimo, saldo);
-    }
-    saldo += Number(e.delta);
-    if (aplicada) minimo = Math.min(minimo, saldo);
-  }
-  if (!aplicada) {
-    saldo -= cantidad;
-    minimo = Math.min(minimo, saldo);
-  }
-
-  if (minimo < -EPSILON) {
-    throw new BadRequestException(
-      `Stock insuficiente para el inventario ${idInventario}: con esta salida el saldo ` +
-        `llegaría a ${minimo.toFixed(4)}` +
-        (saldo >= -EPSILON
-          ? ' antes de reponerse (revise ventas posteriores)'
-          : ''),
-    );
   }
 }

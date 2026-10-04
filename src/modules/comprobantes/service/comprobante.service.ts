@@ -15,7 +15,6 @@ import {
   fechaContable,
   modoInventario,
   validarImportes,
-  validarStockEnElTiempo,
   ymd,
   ymdContable,
 } from './reglas-registro';
@@ -29,7 +28,12 @@ import { LoteCreationService } from 'src/modules/inventario/service/lote-creatio
 import { PeriodoContableService } from 'src/modules/periodos/service';
 import { PersonaService } from 'src/modules/users/services/person.service';
 import { PertenenciaService } from 'src/common/pertenencia.service';
-import { CatalogoService, OPERACION } from 'src/common/catalogo.service';
+import {
+  CatalogoService,
+  COMPROBANTE,
+  OPERACION,
+} from 'src/common/catalogo.service';
+import { ValoracionService } from 'src/modules/inventario/valoracion/valoracion.service';
 
 @Injectable()
 export class ComprobanteService implements OnModuleInit {
@@ -51,6 +55,7 @@ export class ComprobanteService implements OnModuleInit {
     private readonly dataSource: DataSource,
     private readonly pertenencia: PertenenciaService,
     private readonly catalogo: CatalogoService,
+    private readonly valoracion: ValoracionService,
   ) {}
 
   /**
@@ -255,23 +260,12 @@ export class ComprobanteService implements OnModuleInit {
         : null;
 
     if (modo) {
-      // Serializa los registros que tocan los mismos inventarios
+      // Serializa los registros que tocan los mismos inventarios. El stock de
+      // las salidas (en su fecha y después) lo valida el motor de valoración.
       await bloquearInventarios(
         manager,
         detalles.map((d) => d.idInventario),
       );
-      if (modo === 'SALIDA') {
-        const porInventario = new Map<number, number>();
-        for (const d of detalles) {
-          porInventario.set(
-            d.idInventario,
-            (porInventario.get(d.idInventario) ?? 0) + Number(d.cantidad),
-          );
-        }
-        for (const [idInventario, cantidad] of porInventario) {
-          await validarStockEnElTiempo(manager, idInventario, cantidad, fecha);
-        }
-      }
     }
 
     // Correlativo interno
@@ -318,6 +312,18 @@ export class ComprobanteService implements OnModuleInit {
 
     // Lotes (entrada) o consumo de lotes (salida). El costo se guarda en soles.
     const factorCosto = dto.moneda === Moneda.USD ? Number(dto.tipoCambio) : 1;
+    // Una devolución de venta reingresa al costo con que salió, no al precio
+    const esDevolucionDeVenta =
+      modo === 'ENTRADA' &&
+      tipoComprobante.codigo === COMPROBANTE.NOTA_CREDITO &&
+      comprobanteAfecto?.tipoOperacion?.codigo === OPERACION.VENTA;
+    const costosEntrada = esDevolucionDeVenta
+      ? await this.valoracion.costoDeSalidaDe(
+          comprobanteAfecto!.idComprobante,
+          detalles.map((d) => d.idInventario),
+          metodoValoracion,
+        )
+      : undefined;
     const { costoUnitario, lotes } =
       await this.loteCreationService.procesarLotesComprobante(
         detallesGuardados,
@@ -325,6 +331,7 @@ export class ComprobanteService implements OnModuleInit {
         metodoValoracion,
         fecha,
         factorCosto,
+        costosEntrada,
       );
 
     const conRelaciones = await manager.findOne(Comprobante, {
