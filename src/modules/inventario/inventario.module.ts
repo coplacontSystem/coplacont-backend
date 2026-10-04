@@ -33,6 +33,7 @@ import { UserModule } from '../users/user.module';
 import { PeriodosModule } from '../periodos/periodos.module';
 import { ReportesModule } from '../reportes/reportes.module';
 import { CostoVentaReportes } from './reportes/costo-venta.reportes';
+import { KardexReportes } from './reportes/kardex.reportes';
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { CostoVentaReportes } from './reportes/costo-venta.reportes';
     ValoracionService,
     KardexMaterializadoService,
     CostoVentaReportes,
+    KardexReportes,
   ],
   exports: [
     InventarioService,

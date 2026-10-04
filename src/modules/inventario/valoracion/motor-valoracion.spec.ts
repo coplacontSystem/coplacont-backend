@@ -202,4 +202,28 @@ describe('motor de valoración', () => {
     );
     expect(r.lineas[0].costoUnitario).toBe(11);
   });
+
+  it('opcionalmente devuelve los lotes del saldo tras cada línea', () => {
+    const r = valorizar(
+      ordenarMovimientos(base()),
+      FIFO,
+      undefined,
+      undefined,
+      {
+        conLotes: true,
+      },
+    );
+    expect(
+      r.lineas[1].lotes?.map((l) => [l.cantidad, l.costoUnitario]),
+    ).toEqual([
+      [10, 10],
+      [10, 20],
+    ]);
+    expect(
+      r.lineas[2].lotes?.map((l) => [l.cantidad, l.costoUnitario]),
+    ).toEqual([[5, 20]]);
+    expect(
+      valorizar(ordenarMovimientos(base()), FIFO).lineas[0].lotes,
+    ).toBeUndefined();
+  });
 });

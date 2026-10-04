@@ -56,6 +56,8 @@ export interface LineaValorizada {
   saldoCantidad: number;
   saldoValor: number;
   saldoCostoUnitario: number;
+  /** Lotes con existencias tras la línea (solo con `opciones.conLotes`). */
+  lotes?: ConsumoLote[];
 }
 
 export interface LoteEnSaldo {
@@ -121,6 +123,7 @@ export function valorizar(
   metodo: MetodoSegunFecha,
   saldoInicial: SaldoValorizado = saldoVacio(),
   costosConocidos?: CostosDeSalidas,
+  opciones: { conLotes?: boolean } = {},
 ): ResultadoValoracion {
   let cantidad = saldoInicial.cantidad;
   let valor = saldoInicial.valor;
@@ -195,6 +198,18 @@ export function valorizar(
       saldoCantidad: cantidad,
       saldoValor: valor,
       saldoCostoUnitario: cantidad > EPSILON ? valor / cantidad : 0,
+      ...(opciones.conLotes
+        ? {
+            lotes: lotes
+              .filter((l) => l.cantidad > EPSILON)
+              .sort((a, b) => a.orden - b.orden)
+              .map((l) => ({
+                idLote: l.idLote,
+                cantidad: l.cantidad,
+                costoUnitario: l.costoUnitario,
+              })),
+          }
+        : {}),
     });
   }
 

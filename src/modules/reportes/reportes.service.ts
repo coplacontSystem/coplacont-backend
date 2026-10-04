@@ -9,6 +9,7 @@ import { validate } from 'class-validator';
 import { DataSource } from 'typeorm';
 import {
   ArchivoExportado,
+  DatosEmpresa,
   DocumentoTabular,
   FormatoExportacion,
   nombreSeguro,
@@ -73,7 +74,9 @@ export class ReportesService {
     }
 
     const documento = await generador.generar(personaId, filtros);
-    documento.empresa ??= await this.empresa(personaId);
+    if (documento.empresa === undefined) {
+      documento.empresa = await this.datosEmpresa(personaId);
+    }
     return this.exportarDocumento(documento, formato as FormatoExportacion);
   }
 
@@ -95,9 +98,8 @@ export class ReportesService {
     };
   }
 
-  private async empresa(
-    personaId: number,
-  ): Promise<DocumentoTabular['empresa']> {
+  /** Razón social y RUC de la empresa (para el encabezado de los reportes). */
+  async datosEmpresa(personaId: number): Promise<DatosEmpresa | undefined> {
     const [persona]: {
       razon_social: string | null;
       nombre: string;

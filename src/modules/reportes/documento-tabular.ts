@@ -44,7 +44,11 @@ export interface DocumentoTabular {
   titulo: string;
   /** Nombre del archivo sin extensión. */
   nombreArchivo: string;
-  empresa?: DatosEmpresa;
+  /**
+   * Empresa del encabezado. Sin definir, se completa con la del usuario;
+   * null = no mostrarla (el reporte ya la incluye en `datos`, p. ej. formatos SUNAT).
+   */
+  empresa?: DatosEmpresa | null;
   /** Datos del encabezado: período, producto, almacén, método... */
   datos?: { etiqueta: string; valor: string }[];
   secciones: Seccion[];

@@ -62,7 +62,7 @@ describe('exportador CSV', () => {
   });
 
   it('incluye la fila de grupos', () => {
-    expect(lineas).toContain(';;Entradas;Entradas');
+    expect(lineas).toContain(';;Entradas;');
   });
 });
 

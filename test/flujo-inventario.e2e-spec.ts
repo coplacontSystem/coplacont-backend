@@ -57,6 +57,25 @@ describe('Flujo de inventario (e2e)', () => {
     return inv;
   }
 
+  /** Filas de cada hoja del Excel de un reporte, solo con sus valores numéricos. */
+  async function numerosPorHoja(empresa: Empresa, url: string) {
+    const res = await empresa.api.descargar(url);
+    esperarStatus(res, 200);
+    const libro = new ExcelJS.Workbook();
+    await libro.xlsx.load(res.body as ExcelJS.Buffer);
+    const hojas: Record<string, number[][]> = {};
+    for (const hoja of libro.worksheets) {
+      hojas[hoja.name] = [];
+      hoja.eachRow((fila) => {
+        const numeros = (fila.values as unknown[]).filter(
+          (v): v is number => typeof v === 'number',
+        );
+        if (numeros.length) hojas[hoja.name].push(numeros);
+      });
+    }
+    return { hojas, res };
+  }
+
   describe('FIFO', () => {
     let inv: number;
 
@@ -126,6 +145,39 @@ describe('Flujo de inventario (e2e)', () => {
       expect(csv.text).toMatch(/;300\.00;200\.00;100\.00/);
     });
 
+    it('exporta el kardex en los formatos SUNAT 13.1 (por lotes) y 12.1', async () => {
+      const { hojas, res } = await numerosPorHoja(
+        fifo,
+        `/api/reportes/kardex?formato=xlsx&idInventario=${inv}&fechaInicio=2026-01-01&fechaFin=2026-12-31`,
+      );
+      expect(res.headers['content-disposition']).toMatch(
+        /kardex_.*_2026\.xlsx/,
+      );
+      // [entradas | salidas | saldo]; con PEPS el saldo y la salida se abren por lote
+      expect(hojas['Kardex Valorizado']).toEqual([
+        [10, 10, 100, 10, 10, 100],
+        [10, 20, 200, 10, 10, 100],
+        [10, 20, 200],
+        [10, 10, 100, 5, 20, 100],
+        [5, 20, 100],
+        [20, 300, 15, 200, 5, 100],
+      ]);
+      expect(hojas['Kardex Unidades Físicas']).toEqual([
+        [10, 10],
+        [10, 20],
+        [15, 5],
+        [20, 15, 5],
+      ]);
+
+      // Un mes: saldo inicial por lotes (operación 16) y solo sus movimientos
+      const marzo = await fifo.api.get(
+        `/api/reportes/kardex?formato=csv&idInventario=${inv}&fechaInicio=2026-03-06&fechaFin=2026-03-31`,
+      );
+      esperarStatus(marzo, 200);
+      expect(marzo.text).toContain(';;;;16;;;;;;;10.00;10.0000;100.00');
+      expect(marzo.text).toContain('Período;06/03/2026 - 31/03/2026');
+    });
+
     it('no exporta con un almacén de otra empresa', async () => {
       const res = await promedio.api.get(
         `/api/reportes/costo-ventas?formato=pdf&año=2026&idAlmacen=${escFifo.idAlmacen}`,
@@ -161,6 +213,19 @@ describe('Flujo de inventario (e2e)', () => {
 
     it('el inventario muestra el stock restante', async () => {
       expect(await stockActual(promedio.api, inv)).toBe(5);
+    });
+
+    it('exporta el kardex valorizado al promedio en una sola fila por movimiento', async () => {
+      const { hojas } = await numerosPorHoja(
+        promedio,
+        `/api/reportes/kardex?formato=xlsx&idInventario=${inv}&fechaInicio=2026-01-01&fechaFin=2026-12-31`,
+      );
+      expect(hojas['Kardex Valorizado']).toEqual([
+        [10, 10, 100, 10, 10, 100],
+        [10, 20, 200, 20, 15, 300],
+        [15, 15, 225, 5, 15, 75],
+        [20, 300, 15, 225, 5, 75],
+      ]);
     });
 
     // Fase 4: el reporte usa el mismo motor que el kardex (antes sumaba costos FIFO)

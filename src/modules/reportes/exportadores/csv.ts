@@ -46,7 +46,14 @@ export function exportarCsv(doc: DocumentoTabular): Buffer {
     if (seccion.titulo) lineas.push(texto(seccion.titulo));
     const { columnas } = seccion;
     if (columnas.some((c) => c.grupo)) {
-      lineas.push(linea(columnas.map((c) => texto(c.grupo ?? ''))));
+      // El grupo solo en su primera columna (equivale a las celdas combinadas del XLSX)
+      lineas.push(
+        linea(
+          columnas.map((c, i) =>
+            c.grupo && c.grupo !== columnas[i - 1]?.grupo ? texto(c.grupo) : '',
+          ),
+        ),
+      );
     }
     lineas.push(linea(columnas.map((c) => texto(c.titulo))));
     for (const fila of [

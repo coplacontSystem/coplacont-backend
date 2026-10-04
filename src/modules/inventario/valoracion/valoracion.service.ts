@@ -227,6 +227,7 @@ export class ValoracionService {
   async valorizarInventarios(
     idsInventario: number[],
     metodo?: MetodoSegunFecha,
+    opciones: { conLotes?: boolean } = {},
   ): Promise<Map<number, InventarioValorizado>> {
     const movimientos = await this.cargarMovimientos(idsInventario);
     const metodos = metodo ? null : await this.metodosPara(idsInventario);
@@ -237,6 +238,9 @@ export class ValoracionService {
         resultado: valorizar(
           lista,
           metodo ?? metodos!.get(id) ?? MetodoValoracion.PROMEDIO,
+          undefined,
+          undefined,
+          opciones,
         ),
       });
     }
