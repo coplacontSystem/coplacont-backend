@@ -1,5 +1,6 @@
 import { CommonModule } from './common/common.module';
 import { ReportesModule } from './modules/reportes/reportes.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -50,6 +51,7 @@ import { UserRole } from './modules/users/entities/user-role.entity';
     InventarioModule,
     PeriodosModule,
     ReportesModule,
+    DashboardModule,
   ],
   controllers: [AppController, ComprobanteController],
   providers: [AppService, DatabaseSeedService],
