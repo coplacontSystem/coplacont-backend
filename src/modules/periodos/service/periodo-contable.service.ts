@@ -16,6 +16,33 @@ import {
   ResponsePeriodoContableDto,
   CerrarPeriodoDto,
 } from '../dto';
+import { UpdateConfiguracionDto } from '../dto/update-configuracion.dto';
+
+/**
+ * activo: recibe compras y ventas · reabierto: activo tras reabrirse
+ * futuro: creado a la espera de que cierre el activo · pendiente: sin cerrar
+ * ni activo, con movimientos o anterior al activo · cerrado: bloqueado
+ */
+export type EstadoPeriodo =
+  | 'activo'
+  | 'reabierto'
+  | 'futuro'
+  | 'pendiente'
+  | 'cerrado';
+
+export interface PeriodoResumen {
+  id: number;
+  año: number;
+  fechaInicio: string;
+  fechaFin: string;
+  estado: EstadoPeriodo;
+  metodoValoracion: MetodoValoracion;
+  fechaCierre: string | null;
+  cerradoPor: string | null;
+  movimientos: number;
+  puedeCerrar: boolean;
+  puedeReabrir: boolean;
+}
 
 /**
  * Servicio para gestionar períodos contables
@@ -72,21 +99,39 @@ export class PeriodoContableService {
         'La fecha de inicio debe ser anterior a la fecha de fin',
       );
     }
+    const [cruce] = await this.periodoRepository.query(
+      `SELECT "año" FROM periodo_contable
+        WHERE id_persona = $1 AND "fechaInicio" <= $3 AND "fechaFin" >= $2
+        LIMIT 1`,
+      [personaId, fechaInicio, fechaFin],
+    );
+    if (cruce) {
+      throw new BadRequestException(
+        `Las fechas se cruzan con el período ${cruce.año}`,
+      );
+    }
 
-    // Desactivar período activo anterior si existe
-    await this.desactivarPeriodoActivo(personaId);
+    // Si ya hay un período abierto en uso, el nuevo espera a que se cierre
+    const activo = await this.periodoRepository.findOne({
+      where: { persona: { id: personaId }, activo: true, cerrado: false },
+    });
+    const metodo =
+      createDto.metodoValoracion ?? configuracion.metodoCalculoCosto;
+    if (!activo) {
+      await this.desactivarPeriodoActivo(personaId);
+      await this.fijarMetodoEmpresa(personaId, metodo);
+    }
 
-    // Crear nuevo período
     const nuevoPeriodo = this.periodoRepository.create({
       año: createDto.año,
       fechaInicio,
       fechaFin,
       observaciones: createDto.observaciones,
       persona: { id: personaId },
-      activo: true,
+      activo: !activo,
       cerrado: false,
-      // El período se valoriza con el método vigente al crearlo
-      metodoValoracion: configuracion.metodoCalculoCosto,
+      // El período se valoriza con el método elegido al crearlo
+      metodoValoracion: metodo,
     });
 
     const periodoGuardado = await this.periodoRepository.save(nuevoPeriodo);
@@ -288,7 +333,10 @@ export class PeriodoContableService {
     }
 
     // Actualizar período con información de cierre
+    const eraActivo = periodo.activo;
     periodo.cerrado = true;
+    periodo.activo = false;
+    periodo.reabierto = false;
     periodo.fechaCierre = new Date();
     periodo.usuarioCierre = cerrarDto.usuarioCierre;
 
@@ -299,6 +347,9 @@ export class PeriodoContableService {
     }
 
     const periodoCerrado = await this.periodoRepository.save(periodo);
+    if (eraActivo) {
+      await this.activarSiguiente(periodo.persona.id, periodo.año);
+    }
     return this.mapearAResponse(periodoCerrado);
   }
 
@@ -329,7 +380,10 @@ export class PeriodoContableService {
     }
 
     // Actualizar período con información de cierre
+    const eraActivo = periodo.activo;
     periodo.cerrado = true;
+    periodo.activo = false;
+    periodo.reabierto = false;
     periodo.fechaCierre = new Date();
     periodo.usuarioCierre = cerrarDto.usuarioCierre;
 
@@ -340,6 +394,7 @@ export class PeriodoContableService {
     }
 
     const periodoCerrado = await this.periodoRepository.save(periodo);
+    if (eraActivo) await this.activarSiguiente(personaId, periodo.año);
     return this.mapearAResponse(periodoCerrado);
   }
 
@@ -387,12 +442,37 @@ export class PeriodoContableService {
       throw new BadRequestException('El período no está cerrado');
     }
 
-    // Reabrir período
+    // Solo el último cerrado, y de uno en uno
+    const ultimoCerrado = await this.periodoRepository.findOne({
+      where: { persona: { id: personaId }, cerrado: true },
+      order: { año: 'DESC' },
+    });
+    if (ultimoCerrado?.id !== periodo.id) {
+      throw new BadRequestException(
+        'Solo se puede reabrir el último período cerrado',
+      );
+    }
+    const otroReabierto = await this.periodoRepository.findOne({
+      where: { persona: { id: personaId }, reabierto: true },
+    });
+    if (otroReabierto) {
+      throw new BadRequestException(
+        `Cierra primero el período ${otroReabierto.año}, que está reabierto`,
+      );
+    }
+
+    // El reabierto pasa a ser el activo hasta que se vuelva a cerrar
+    await this.desactivarPeriodoActivo(personaId);
     periodo.cerrado = false;
+    periodo.activo = true;
+    periodo.reabierto = true;
     periodo.fechaCierre = undefined;
     periodo.usuarioCierre = undefined;
 
     const periodoReabierto = await this.periodoRepository.save(periodo);
+    if (periodo.metodoValoracion) {
+      await this.fijarMetodoEmpresa(personaId, periodo.metodoValoracion);
+    }
     return this.mapearAResponse(periodoReabierto);
   }
 
@@ -640,6 +720,159 @@ export class PeriodoContableService {
 
     configuracion.metodoCalculoCosto = nuevoMetodo;
     return await this.configuracionRepository.save(configuracion);
+  }
+
+  /** Períodos de la empresa con su estado y lo que se puede hacer con cada uno */
+  async resumenPorPersona(personaId: number): Promise<PeriodoResumen[]> {
+    const filas: {
+      id: number;
+      año: number;
+      inicio: string;
+      fin: string;
+      activo: boolean;
+      cerrado: boolean;
+      reabierto: boolean;
+      metodo: MetodoValoracion;
+      fechaCierre: Date | null;
+      cerrado_por: string | null;
+      movimientos: string;
+    }[] = await this.periodoRepository.query(
+      `SELECT p.id, p."año", p.activo, p.cerrado, p.reabierto, p."fechaCierre",
+              to_char(p."fechaInicio", 'YYYY-MM-DD') AS inicio,
+              to_char(p."fechaFin", 'YYYY-MM-DD') AS fin,
+              COALESCE(p."metodoValoracion"::text, cfg."metodoCalculoCosto"::text,
+                       'promedio') AS metodo,
+              COALESCE(u.nombre, p."usuarioCierre") AS cerrado_por,
+              (SELECT COUNT(DISTINCT m.id)
+                 FROM movimientos m
+                 JOIN movimiento_detalles md ON md.id_movimiento = m.id
+                 JOIN inventario i ON i.id = md.id_inventario
+                 JOIN almacen a ON a.id = i.id_almacen
+                WHERE a.id_persona = p.id_persona AND m.estado = 'PROCESADO'
+                  AND m.fecha >= p."fechaInicio" AND m.fecha < p."fechaFin" + 1
+              ) AS movimientos
+         FROM periodo_contable p
+         LEFT JOIN configuracion_periodo cfg
+                ON cfg.id_persona = p.id_persona AND cfg.activa
+         LEFT JOIN "user" u ON u.email = p."usuarioCierre"
+        WHERE p.id_persona = $1
+        ORDER BY p."año" DESC`,
+      [personaId],
+    );
+    const activo = filas.find((f) => f.activo && !f.cerrado);
+    const ultimoCerrado = filas.find((f) => f.cerrado);
+    const hayReabierto = filas.some((f) => f.reabierto && !f.cerrado);
+    return filas.map((f) => {
+      const movimientos = Number(f.movimientos);
+      let estado: EstadoPeriodo;
+      if (f.cerrado) estado = 'cerrado';
+      else if (f.activo) estado = f.reabierto ? 'reabierto' : 'activo';
+      else if (movimientos === 0 && (!activo || f.año > activo.año))
+        estado = 'futuro';
+      else estado = 'pendiente';
+      return {
+        id: f.id,
+        año: f.año,
+        fechaInicio: f.inicio,
+        fechaFin: f.fin,
+        estado,
+        metodoValoracion: f.metodo,
+        fechaCierre: f.fechaCierre
+          ? new Date(f.fechaCierre).toISOString()
+          : null,
+        cerradoPor: f.cerrado_por,
+        movimientos,
+        puedeCerrar: estado !== 'cerrado' && estado !== 'futuro',
+        puedeReabrir: f.id === ultimoCerrado?.id && !hayReabierto,
+      };
+    });
+  }
+
+  /** Reglas del período más el estado del método de valoración */
+  async configuracionCompleta(personaId: number) {
+    const config = await this.obtenerConfiguracion(personaId);
+    const activo = (await this.resumenPorPersona(personaId)).find(
+      (p) => p.estado === 'activo' || p.estado === 'reabierto',
+    );
+    return {
+      metodoValoracion: activo?.metodoValoracion ?? config.metodoCalculoCosto,
+      duracionMeses: config.duracionMeses,
+      mesInicio: config.mesInicio,
+      diasLimiteRetroactivo: config.diasLimiteRetroactivo,
+      recalculoAutomaticoKardex: config.recalculoAutomaticoKardex,
+      requiereAutorizacionRetroactivo: config.requiereAutorizacionRetroactivo,
+      cierreAutomatico: config.cierreAutomatico,
+      diasParaCierreAutomatico: config.diasParaCierreAutomatico,
+      notificarProximoCierre: config.notificarProximoCierre,
+      diasNotificacionCierre: config.diasNotificacionCierre,
+      permitirMovimientosPeriodoCerrado:
+        config.permitirMovimientosPeriodoCerrado,
+      // Solo se cambia mientras el período activo no tenga movimientos
+      metodoBloqueado: !activo || activo.movimientos > 0,
+      periodoActivo: activo
+        ? { id: activo.id, año: activo.año, movimientos: activo.movimientos }
+        : null,
+    };
+  }
+
+  async actualizarConfiguracion(
+    personaId: number,
+    dto: UpdateConfiguracionDto,
+  ) {
+    const config = await this.obtenerConfiguracion(personaId);
+    const campos: (keyof UpdateConfiguracionDto)[] = [
+      'mesInicio',
+      'diasLimiteRetroactivo',
+      'requiereAutorizacionRetroactivo',
+      'cierreAutomatico',
+      'diasParaCierreAutomatico',
+      'notificarProximoCierre',
+      'diasNotificacionCierre',
+      'permitirMovimientosPeriodoCerrado',
+    ];
+    for (const campo of campos) {
+      if (dto[campo] !== undefined) (config as any)[campo] = dto[campo];
+    }
+    await this.configuracionRepository.save(config);
+    return this.configuracionCompleta(personaId);
+  }
+
+  /** Activa el siguiente período sin cerrar, si no queda otro activo */
+  private async activarSiguiente(personaId: number, año: number) {
+    const hayActivo = await this.periodoRepository.findOne({
+      where: { persona: { id: personaId }, activo: true },
+    });
+    if (hayActivo) return;
+    const [siguiente] = await this.periodoRepository.query(
+      `SELECT id, "metodoValoracion" FROM periodo_contable
+        WHERE id_persona = $1 AND NOT cerrado AND "año" > $2
+        ORDER BY "año" LIMIT 1`,
+      [personaId, año],
+    );
+    if (!siguiente) return;
+    await this.periodoRepository.update(siguiente.id, { activo: true });
+    if (siguiente.metodoValoracion) {
+      await this.fijarMetodoEmpresa(personaId, siguiente.metodoValoracion);
+    }
+  }
+
+  /**
+   * Cambia el método vigente de la empresa sin revalorizar otros períodos:
+   * los que aún usan el de la configuración se quedan con el actual.
+   */
+  private async fijarMetodoEmpresa(
+    personaId: number,
+    metodo: MetodoValoracion,
+  ) {
+    const config = await this.obtenerConfiguracion(personaId);
+    if (config.metodoCalculoCosto === metodo) return;
+    await this.periodoRepository.query(
+      `UPDATE periodo_contable SET "metodoValoracion" = $2
+        WHERE id_persona = $1 AND "metodoValoracion" IS NULL`,
+      [personaId, config.metodoCalculoCosto],
+    );
+    config.metodoCalculoCosto = metodo;
+    await this.configuracionRepository.save(config);
   }
 
   /**

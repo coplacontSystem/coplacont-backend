@@ -71,6 +71,30 @@ export class DashboardService {
     return this.dataSource.query(sql, params);
   }
 
+  /** Valor del inventario de la empresa al cierre de un día (YYYY-MM-DD) */
+  async inventarioAl(
+    personaId: number,
+    fecha: string,
+  ): Promise<{ fecha: string; valor: number }> {
+    const inventarios = await this.query<{ id: string }>(
+      `SELECT i.id FROM inventario i JOIN almacen a ON a.id = i.id_almacen
+        WHERE a.id_persona = $1`,
+      [personaId],
+    );
+    await this.kardex.asegurarAlDia(inventarios.map((i) => Number(i.id)));
+    const [fila] = await this.query<{ valor: string | null }>(
+      `SELECT SUM(u.saldo_valor) AS valor
+         FROM (SELECT DISTINCT ON (kl.id_inventario) kl.saldo_valor
+                 FROM kardex_linea kl
+                 JOIN inventario i ON i.id = kl.id_inventario
+                 JOIN almacen a ON a.id = i.id_almacen
+                WHERE a.id_persona = $1 AND kl.dia <= $2
+                ORDER BY kl.id_inventario, kl.dia DESC, kl.orden DESC) u`,
+      [personaId, fecha],
+    );
+    return { fecha, valor: Math.round(Number(fila?.valor ?? 0) * 100) / 100 };
+  }
+
   async obtener(personaId: number, periodo?: string): Promise<Dashboard> {
     const mes = periodo ?? mesActual();
     const desde = `${sumarMeses(mes, -11)}-01`;

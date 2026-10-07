@@ -58,6 +58,10 @@ export class PeriodoContable {
   @Column({ default: false })
   cerrado: boolean;
 
+  /** Se reabrió después de cerrarse; vuelve a false al cerrarlo otra vez */
+  @Column({ default: false })
+  reabierto: boolean;
+
   /**
    * Método de valoración con que se valoriza el kardex de este período.
    * Se fija al crear el período y solo cambia mientras no tenga movimientos;

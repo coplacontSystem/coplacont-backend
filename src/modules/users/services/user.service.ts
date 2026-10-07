@@ -206,6 +206,15 @@ export class UserService {
   async updatePassword(userId: number, hashedPassword: string): Promise<void> {
     await this.userRepository.update(userId, {
       contrasena: hashedPassword,
+      contrasenaActualizada: new Date(),
+    });
+  }
+
+  /** Registra el inicio de sesión para mostrarlo en Mi cuenta */
+  async registrarLogin(userId: number, agente?: string): Promise<void> {
+    await this.userRepository.update(userId, {
+      ultimoLogin: new Date(),
+      ultimoAgente: agente ? agente.slice(0, 300) : null,
     });
   }
 

@@ -1,5 +1,13 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, Matches } from 'class-validator';
+
+export class InventarioAlQueryDto {
+  @ApiProperty({ example: '2026-12-31' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, {
+    message: 'fecha debe tener el formato YYYY-MM-DD',
+  })
+  fecha: string;
+}
 
 export class DashboardQueryDto {
   @ApiPropertyOptional({

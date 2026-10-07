@@ -59,7 +59,10 @@ export class AuthService {
    * @param authLoginDto Datos de login (email y contraseña)
    * @returns Respuesta de autenticación con mensaje, email, JWT y datos de persona (si es exitoso)
    */
-  async login(authLoginDto: AuthLoginDto): Promise<AuthResponseDto> {
+  async login(
+    authLoginDto: AuthLoginDto,
+    agente?: string,
+  ): Promise<AuthResponseDto> {
     const user = await this.validateUser(
       authLoginDto.email,
       authLoginDto.contrasena,
@@ -69,6 +72,7 @@ export class AuthService {
       return this.buildAuthResponse('Credenciales inválidas', false);
     }
 
+    await this.usersService.registrarLogin(user.id, agente);
     const roles = await this.userRoleService.findRolesByUser(user);
     const permissions =
       await this.rolePermissionService.findPermissionsByRoles(roles);
