@@ -36,8 +36,8 @@ export interface Seccion {
 export interface DatosEmpresa {
   razonSocial: string;
   ruc?: string;
-  /** Reservado: logo de la empresa (aún no se usa en los exportadores). */
-  logo?: Buffer;
+  /** Logo como data URL JPG/PNG; el PDF lo pone a la derecha del encabezado. */
+  logo?: string | null;
 }
 
 export interface DocumentoTabular {

@@ -98,14 +98,15 @@ export class ReportesService {
     };
   }
 
-  /** Razón social y RUC de la empresa (para el encabezado de los reportes). */
+  /** Razón social, RUC y logo de la empresa (encabezado de los reportes). */
   async datosEmpresa(personaId: number): Promise<DatosEmpresa | undefined> {
     const [persona]: {
       razon_social: string | null;
       nombre: string;
       ruc: string;
+      logo: string | null;
     }[] = await this.dataSource.query(
-      `SELECT "razonSocial" AS razon_social, "nombreEmpresa" AS nombre, ruc
+      `SELECT "razonSocial" AS razon_social, "nombreEmpresa" AS nombre, ruc, logo
            FROM persona WHERE id = $1`,
       [personaId],
     );
@@ -113,6 +114,7 @@ export class ReportesService {
       ? {
           razonSocial: persona.razon_social || persona.nombre,
           ruc: persona.ruc,
+          logo: persona.logo,
         }
       : undefined;
   }

@@ -133,7 +133,7 @@ export async function exportarPdf(doc: DocumentoTabular): Promise<Buffer> {
     ...(doc.datos ?? []),
   ];
 
-  const contenido: Content[] = [
+  const encabezado: Content[] = [
     { text: doc.titulo, bold: true, fontSize: 13, margin: [0, 0, 0, 6] },
     ...datos.map(
       (d): Content => ({
@@ -141,6 +141,21 @@ export async function exportarPdf(doc: DocumentoTabular): Promise<Buffer> {
         fontSize: 9,
       }),
     ),
+  ];
+  const logo = doc.empresa?.logo;
+  const contenido: Content[] = [
+    logo
+      ? {
+          columns: [
+            { stack: encabezado, width: '*' },
+            {
+              width: 130,
+              stack: [{ image: logo, fit: [130, 52], alignment: 'right' }],
+            },
+          ],
+          columnGap: 12,
+        }
+      : { stack: encabezado },
     { text: ' ', margin: [0, 0, 0, 4] },
   ];
   for (const seccion of doc.secciones) {

@@ -137,4 +137,17 @@ describe('exportador PDF', () => {
     const pdf = await exportarPdf(doc);
     expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
   });
+
+  it('pone el logo de la empresa en el encabezado', async () => {
+    const png =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const doc = documento(3);
+    const sinLogo = await exportarPdf(doc);
+    const conLogo = await exportarPdf({
+      ...doc,
+      empresa: { ...doc.empresa!, logo: png },
+    });
+    expect(conLogo.toString('latin1')).toMatch(/\/Subtype \/Image/);
+    expect(sinLogo.toString('latin1')).not.toMatch(/\/Subtype \/Image/);
+  });
 });
