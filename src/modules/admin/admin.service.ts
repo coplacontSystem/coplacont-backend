@@ -54,15 +54,17 @@ export class AdminService {
         this.query<{ n: string }>(
           `SELECT COUNT(*) AS n FROM "user" WHERE "personaId" IS NOT NULL`,
         ),
+        // Mes en curso frente a los mismos días del mes anterior
         this.query<{ actual: string; anterior: string }>(
           `SELECT COUNT(*) FILTER (WHERE "fechaRegistro" >= $1) AS actual,
-                  COUNT(*) FILTER (WHERE "fechaRegistro" < $1) AS anterior
+                  COUNT(*) FILTER (WHERE "fechaRegistro" < $2::date + ($3::date - $1::date + 1))
+                    AS anterior
              FROM comprobante WHERE "fechaRegistro" >= $2`,
-          [inicioMes, inicioAnterior],
+          [inicioMes, inicioAnterior, hoy],
         ),
         this.actividad(desde),
         this.query(
-          `SELECT u.id, u.nombre, u.ultimo_login, u.ultimo_agente,
+          `SELECT u.id, u.nombre, u.ultimo_login, u.ultimo_agente, u.avatar,
                   COALESCE(NULLIF(p."razonSocial", ''), p."nombreEmpresa") AS empresa
              FROM "user" u LEFT JOIN persona p ON p.id = u."personaId"
             WHERE u.ultimo_login IS NOT NULL
@@ -94,7 +96,7 @@ export class AdminService {
         atencion.push({
           ...base,
           tipo: 'periodoVencido',
-          severidad: 'media',
+          severidad: 'alta',
           periodo: { año: e.fila.periodo.año, fin: e.fila.periodo.fin },
         });
       }
@@ -114,7 +116,7 @@ export class AdminService {
     for (const u of sinLogin) {
       atencion.push({
         tipo: 'sinLogin',
-        severidad: 'baja',
+        severidad: 'media',
         idPersona: Number(u.id_persona),
         empresa: u.empresa,
         usuario: {
@@ -149,6 +151,7 @@ export class AdminService {
         nombre: a.nombre,
         empresa: a.empresa ?? null,
         agente: a.ultimo_agente ?? null,
+        avatar: a.avatar ?? null,
         fecha: iso(a.ultimo_login)!,
       })),
       altas: [...filas]

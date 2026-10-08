@@ -89,7 +89,7 @@ describe('Panel del administrador (e2e)', () => {
       (a: any) => a.tipo === 'sinLogin' && a.usuario.id === idUsuarioNuevo,
     );
     expect(sinLogin).toMatchObject({
-      severidad: 'baja',
+      severidad: 'media',
       idPersona: sinPeriodo.personaId,
     });
   });

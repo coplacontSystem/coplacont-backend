@@ -38,7 +38,7 @@ export interface AdminDashboard {
     empresasActivas30: number;
     comprobantesMes: number;
     comprobantesMesAnterior: number;
-    /** % frente al mes anterior; null si el anterior fue 0 */
+    /** % frente a los mismos días del mes anterior; null si fue 0 */
     variacion: number | null;
   };
   actividad: { mes: string; comprobantes: number; empresasNuevas: number }[];
@@ -49,6 +49,7 @@ export interface AdminDashboard {
     nombre: string;
     empresa: string | null;
     agente: string | null;
+    avatar: string | null;
     fecha: string;
   }[];
   altas: { id: number; razonSocial: string; fecha: string; usuarios: number }[];
