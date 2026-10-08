@@ -1,3 +1,4 @@
+import { KardexMaterializadoService } from '../valoracion/kardex-materializado.service';
 import {
   Injectable,
   NotFoundException,
@@ -23,7 +24,6 @@ import { TipoMovimiento } from '../../movimientos/enum/tipo-movimiento.enum';
 import { EstadoMovimiento } from '../../movimientos/enum/estado-movimiento.enum';
 import { InventarioLoteService } from './inventario-lote.service';
 import { PeriodoContableService } from 'src/modules/periodos/service';
-import { StockCacheService } from './stock-cache.service';
 import { UpdateInventarioLoteDto } from '../dto/inventario-lote/update-inventario-lote.dto';
 
 @Injectable()
@@ -37,8 +37,8 @@ export class InventarioService {
     private readonly movimientoRepository: Repository<Movimiento>,
     private readonly inventarioLoteService: InventarioLoteService,
     private readonly periodoContableService: PeriodoContableService,
-    private readonly stockCacheService: StockCacheService,
-  ) { }
+    private readonly kardex: KardexMaterializadoService,
+  ) {}
 
   private readonly logger = new Logger(InventarioService.name);
 
@@ -69,7 +69,6 @@ export class InventarioService {
 
   async create(
     createInventarioDto: CreateInventarioDto,
-    personaId?: number,
   ): Promise<ResponseInventarioDto> {
     const {
       idAlmacen,
@@ -170,26 +169,28 @@ export class InventarioService {
   async findAll(personaId?: number): Promise<ResponseInventarioDto[]> {
     const inventarios = await this.inventarioRepository.findAll(personaId);
 
-    const inventariosWithStock = await Promise.all(
-      inventarios.map(async (inventario) => {
-        this.logger.log(
-          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
-        );
-        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
-        const stockResult =
-          await this.stockCalculationService.calcularStockInventario(
-            inventario.id,
-            fechaHasta,
-          );
-        const stockActual = stockResult?.stockActual ?? 0;
-        this.logger.log(
-          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
-        );
-        return this.mapToResponseDto(inventario, stockActual);
-      }),
-    );
+    return this.conStock(inventarios, personaId);
+  }
 
-    return inventariosWithStock;
+  /**
+   * Agrega el stock actual a una lista de inventarios con un solo cálculo
+   * agregado (antes era un cálculo, y varias consultas por lote, por inventario).
+   */
+  private async conStock(
+    inventarios: Inventario[],
+    personaId?: number,
+  ): Promise<ResponseInventarioDto[]> {
+    const fechaHasta = await this.getFechaHastaParaPersona(personaId);
+    const stock = await this.stockCalculationService.calcularStockInventarios(
+      inventarios.map((i) => i.id),
+      fechaHasta,
+    );
+    return inventarios.map((inventario) =>
+      this.mapToResponseDto(
+        inventario,
+        stock.get(Number(inventario.id))?.stockActual ?? 0,
+      ),
+    );
   }
 
   /**
@@ -204,18 +205,12 @@ export class InventarioService {
       throw new NotFoundException(`Inventario con ID ${id} no encontrado`);
     }
 
-    this.logger.log(
-      `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
-    );
     const stockResult =
       await this.stockCalculationService.calcularStockInventario(
         inventario.id,
         new Date(),
       );
     const stockActual = stockResult?.stockActual;
-    this.logger.log(
-      `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual ?? 0} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
-    );
     return this.mapToResponseDto(inventario, stockActual);
   }
 
@@ -228,25 +223,7 @@ export class InventarioService {
       idAlmacen,
       personaId,
     );
-    const inventariosWithStock = await Promise.all(
-      inventarios.map(async (inventario) => {
-        this.logger.log(
-          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
-        );
-        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
-        const stockResult =
-          await this.stockCalculationService.calcularStockInventario(
-            inventario.id,
-            fechaHasta,
-          );
-        const stockActual = stockResult?.stockActual ?? 0;
-        this.logger.log(
-          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
-        );
-        return this.mapToResponseDto(inventario, stockActual);
-      }),
-    );
-    return inventariosWithStock;
+    return this.conStock(inventarios, personaId);
   }
 
   async findByProducto(
@@ -258,25 +235,7 @@ export class InventarioService {
       idProducto,
       personaId,
     );
-    const inventariosWithStock = await Promise.all(
-      inventarios.map(async (inventario) => {
-        this.logger.log(
-          `🔍 [STOCK-TRACE] Calculando stock para Inventario=${inventario.id} Producto=${inventario.producto?.nombre} Almacen=${inventario.almacen?.nombre}`,
-        );
-        const fechaHasta = await this.getFechaHastaParaPersona(personaId);
-        const stockResult =
-          await this.stockCalculationService.calcularStockInventario(
-            inventario.id,
-            fechaHasta,
-          );
-        const stockActual = stockResult?.stockActual ?? 0;
-        this.logger.log(
-          `✅ [STOCK-TRACE] Resultado Inventario=${inventario.id} Stock=${stockActual} CostoPromedio=${stockResult?.costoPromedioActual ?? 0} Lotes=${stockResult?.lotes?.length ?? 0}`,
-        );
-        return this.mapToResponseDto(inventario, stockActual);
-      }),
-    );
-    return inventariosWithStock;
+    return this.conStock(inventarios, personaId);
   }
 
   /**
@@ -325,10 +284,10 @@ export class InventarioService {
       lote,
       movimiento: movimiento
         ? {
-          id: movimiento.id,
-          fecha: movimiento.fecha,
-          numeroDocumento: movimiento.numeroDocumento,
-        }
+            id: movimiento.id,
+            fecha: movimiento.fecha,
+            numeroDocumento: movimiento.numeroDocumento,
+          }
         : null,
       detalle: { id: detalle.id, cantidad: Number(detalle.cantidad) },
     };
@@ -406,18 +365,18 @@ export class InventarioService {
       await this.movimientoDetalleRepository.save(detalle);
     }
 
-    // Invalidar caché de stock para reflejar el cambio
-    this.stockCacheService.invalidateInventario(idInventario);
+    // El inventario inicial cambia el kardex desde el inicio
+    await this.kardex.marcarPendiente([idInventario]);
 
     const movimiento = detalle.movimiento;
     return {
       lote: updatedLote,
       movimiento: movimiento
         ? {
-          id: movimiento.id,
-          fecha: movimiento.fecha,
-          numeroDocumento: movimiento.numeroDocumento,
-        }
+            id: movimiento.id,
+            fecha: movimiento.fecha,
+            numeroDocumento: movimiento.numeroDocumento,
+          }
         : null,
       detalle: { id: detalle.id, cantidad: Number(detalle.cantidad) },
     };
@@ -552,10 +511,11 @@ export class InventarioService {
     let sinStock = 0;
     let valorTotal = 0;
 
+    const stock = await this.stockCalculationService.calcularStockInventarios(
+      inventarios.map((i) => i.id),
+    );
     for (const inv of inventarios) {
-      const stockResult =
-        await this.stockCalculationService.calcularStockInventario(inv.id);
-      const stockActual = stockResult?.stockActual || 0;
+      const stockActual = stock.get(Number(inv.id))?.stockActual || 0;
 
       if (stockActual <= inv.producto.stockMinimo) stockBajo++;
       if (stockActual === 0) sinStock++;
@@ -569,66 +529,6 @@ export class InventarioService {
       sinStock,
       valorTotal: parseFloat(valorTotal.toFixed(2)),
     };
-  }
-
-  /**
-   * Calcula el stock actual de un inventario basándose en compras y ventas
-   * @param inventarioId - ID del inventario
-   * @param personaId - ID de la empresa
-   * @returns Promise<number> Stock actual calculado
-   */
-  async calculateStock(
-    inventarioId: number,
-    personaId: number,
-  ): Promise<number> {
-    // Obtener todas las entradas (ENTRADA) para este inventario
-    const entradas = await this.movimientoDetalleRepository
-      .createQueryBuilder('detalle')
-      .leftJoin('detalle.movimiento', 'movimiento')
-      .leftJoin('movimiento.comprobante', 'comprobante')
-      .leftJoin('comprobante.persona', 'persona')
-      .select('SUM(detalle.cantidad)', 'totalEntradas')
-      .where('detalle.idInventario = :inventarioId', { inventarioId })
-      .andWhere('movimiento.tipo = :tipoEntrada', {
-        tipoEntrada: TipoMovimiento.ENTRADA,
-      })
-      .andWhere('persona.id = :personaId', { personaId })
-      .getRawOne<{ totalEntradas: string | number | null }>();
-
-    // Obtener todas las salidas (SALIDA) para este inventario
-    const salidas = await this.movimientoDetalleRepository
-      .createQueryBuilder('detalle')
-      .leftJoin('detalle.movimiento', 'movimiento')
-      .leftJoin('movimiento.comprobante', 'comprobante')
-      .leftJoin('comprobante.persona', 'persona')
-      .select('SUM(detalle.cantidad)', 'totalSalidas')
-      .where('detalle.idInventario = :inventarioId', { inventarioId })
-      .andWhere('movimiento.tipo = :tipoSalida', {
-        tipoSalida: TipoMovimiento.SALIDA,
-      })
-      .andWhere('persona.id = :personaId', { personaId })
-      .getRawOne<{ totalSalidas: string | number | null }>();
-
-    // Obtener todos los ajustes para este inventario
-    const ajustes = await this.movimientoDetalleRepository
-      .createQueryBuilder('detalle')
-      .leftJoin('detalle.movimiento', 'movimiento')
-      .leftJoin('movimiento.comprobante', 'comprobante')
-      .leftJoin('comprobante.persona', 'persona')
-      .select('SUM(detalle.cantidad)', 'totalAjustes')
-      .where('detalle.idInventario = :inventarioId', { inventarioId })
-      .andWhere('movimiento.tipo = :tipoAjuste', {
-        tipoAjuste: TipoMovimiento.AJUSTE,
-      })
-      .andWhere('persona.id = :personaId', { personaId })
-      .getRawOne<{ totalAjustes: string | number | null }>();
-
-    const totalEntradas = parseFloat(String(entradas?.totalEntradas ?? 0)) || 0;
-    const totalSalidas = parseFloat(String(salidas?.totalSalidas ?? 0)) || 0;
-    const totalAjustes = parseFloat(String(ajustes?.totalAjustes ?? 0)) || 0;
-
-    // Stock = Entradas - Salidas + Ajustes
-    return totalEntradas - totalSalidas + totalAjustes;
   }
 
   private async validateAlmacenExists(idAlmacen: number): Promise<void> {

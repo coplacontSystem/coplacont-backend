@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { MovimientosRepository } from '../repository/movimientos.repository';
+import { KardexMaterializadoService } from 'src/modules/inventario/valoracion/kardex-materializado.service';
 import { CreateMovimientoDto } from '../dto/create-movimiento.dto';
 import { ResponseMovimientoDto } from '../dto/response-movimiento.dto';
 import { TipoMovimiento } from '../enum/tipo-movimiento.enum';
@@ -18,7 +19,10 @@ import { EstadoMovimiento } from '../enum/estado-movimiento.enum';
 export class MovimientosService {
   private readonly logger = new Logger(MovimientosService.name);
 
-  constructor(private readonly movimientosRepository: MovimientosRepository) {}
+  constructor(
+    private readonly movimientosRepository: MovimientosRepository,
+    private readonly kardex: KardexMaterializadoService,
+  ) {}
 
   /**
    * Crear un nuevo movimiento
@@ -26,53 +30,13 @@ export class MovimientosService {
   async create(
     createMovimientoDto: CreateMovimientoDto,
   ): Promise<ResponseMovimientoDto> {
-    this.logger.log(
-      `🔄 [RECALCULO-TRACE] Iniciando creación de movimiento: Tipo=${String(createMovimientoDto.tipo)}, Fecha=${new Date(createMovimientoDto.fecha).toISOString()}, ComprobanteId=${String(createMovimientoDto.idComprobante)}`,
-    );
-
-    // Verificar si es un movimiento retroactivo
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    const fechaMovimiento = new Date(createMovimientoDto.fecha);
-    fechaMovimiento.setHours(0, 0, 0, 0);
-    const esMovimientoRetroactivo = fechaMovimiento < hoy;
-
-    this.logger.log(
-      `🔍 [RECALCULO-TRACE] Verificación movimiento retroactivo: ${esMovimientoRetroactivo ? 'SÍ' : 'NO'} (Fecha movimiento: ${fechaMovimiento.toISOString().split('T')[0]}, Hoy: ${hoy.toISOString().split('T')[0]})`,
-    );
-
-    // Log detalles del movimiento
-    this.logger.log(
-      `📋 [RECALCULO-TRACE] Detalles del movimiento: ${createMovimientoDto.detalles.length} productos, Estado=${createMovimientoDto.estado}`,
-    );
-
-    if (esMovimientoRetroactivo) {
-      this.logger.warn(
-        `⚠️ [RECALCULO-TRACE] MOVIMIENTO RETROACTIVO DETECTADO - Este movimiento puede activar recálculo automático de Kardex`,
-      );
-    }
-
     // Validar que existan los productos y almacenes
-    this.logger.log(
-      `🔍 [RECALCULO-TRACE] Validando existencia de inventarios y lotes`,
-    );
     await this.validateDetalles(createMovimientoDto.detalles);
-    this.logger.log(`✅ [RECALCULO-TRACE] Validación de detalles completada`);
 
     // Crear el movimiento
-    this.logger.log(`💾 [RECALCULO-TRACE] Creando movimiento en base de datos`);
     const movimiento =
       await this.movimientosRepository.create(createMovimientoDto);
-    this.logger.log(
-      `✅ [RECALCULO-TRACE] Movimiento creado exitosamente con ID=${movimiento.id}`,
-    );
-
-    if (esMovimientoRetroactivo) {
-      this.logger.log(
-        `🔄 [RECALCULO-TRACE] NOTA: El movimiento retroactivo ID=${movimiento.id} ha sido creado - El sistema debería procesar recálculo automático si está configurado`,
-      );
-    }
-
+    await this.kardex.marcarPendientePorMovimiento(movimiento.id);
     return this.mapToResponseDto(movimiento);
   }
 
@@ -84,57 +48,14 @@ export class MovimientosService {
     createMovimientoDto: CreateMovimientoDto,
     manager: any,
   ): Promise<ResponseMovimientoDto> {
-    this.logger.log(
-      `🔄 [RECALCULO-TRACE] Iniciando creación de movimiento con EntityManager: Tipo=${String(createMovimientoDto.tipo)}, Fecha=${new Date(createMovimientoDto.fecha).toISOString()}, ComprobanteId=${String(createMovimientoDto.idComprobante)}`,
-    );
-
-    // Verificar si es un movimiento retroactivo
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    const fechaMovimiento = new Date(createMovimientoDto.fecha);
-    fechaMovimiento.setHours(0, 0, 0, 0);
-    const esMovimientoRetroactivo = fechaMovimiento < hoy;
-
-    this.logger.log(
-      `🔍 [RECALCULO-TRACE] Verificación movimiento retroactivo: ${esMovimientoRetroactivo ? 'SÍ' : 'NO'} (Fecha movimiento: ${fechaMovimiento.toISOString().split('T')[0]}, Hoy: ${hoy.toISOString().split('T')[0]})`,
-    );
-
-    // Log detalles del movimiento
-    this.logger.log(
-      `📋 [RECALCULO-TRACE] Detalles del movimiento: ${createMovimientoDto.detalles.length} productos, Estado=${createMovimientoDto.estado}`,
-    );
-
-    if (esMovimientoRetroactivo) {
-      this.logger.warn(
-        `⚠️ [RECALCULO-TRACE] MOVIMIENTO RETROACTIVO DETECTADO - Este movimiento puede activar recálculo automático de Kardex`,
-      );
-    }
-
     // Validar que existan los productos y almacenes
-    this.logger.log(
-      `🔍 [RECALCULO-TRACE] Validando existencia de inventarios y lotes`,
-    );
     await this.validateDetalles(createMovimientoDto.detalles);
-    this.logger.log(`✅ [RECALCULO-TRACE] Validación de detalles completada`);
 
     // Crear el movimiento usando el EntityManager proporcionado
-    this.logger.log(
-      `💾 [RECALCULO-TRACE] Creando movimiento en base de datos con EntityManager`,
-    );
     const movimiento = await this.movimientosRepository.createWithManager(
       createMovimientoDto,
       manager,
     );
-    this.logger.log(
-      `✅ [RECALCULO-TRACE] Movimiento creado exitosamente con ID=${movimiento.id}`,
-    );
-
-    if (esMovimientoRetroactivo) {
-      this.logger.log(
-        `🔄 [RECALCULO-TRACE] NOTA: El movimiento retroactivo ID=${movimiento.id} ha sido creado - El sistema debería procesar recálculo automático si está configurado`,
-      );
-    }
-
     return this.mapToResponseDto(movimiento);
   }
 
@@ -212,6 +133,8 @@ export class MovimientosService {
       id,
       estado,
     );
+    // Solo los movimientos procesados cuentan en el kardex
+    await this.kardex.marcarPendientePorMovimiento(id);
     return this.mapToResponseDto(updatedMovimiento);
   }
 

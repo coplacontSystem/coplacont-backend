@@ -1,3 +1,7 @@
+import { CommonModule } from './common/common.module';
+import { ReportesModule } from './modules/reportes/reportes.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { CuentaModule } from './modules/cuenta/cuenta.module';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -32,6 +36,9 @@ import { UserRole } from './modules/users/entities/user-role.entity';
     // TypeORM para el servicio de seed
     TypeOrmModule.forFeature([Role, User, UserRole]),
 
+    // Servicios transversales (verificación de pertenencia por empresa)
+    CommonModule,
+
     // Módulos funcionales
     UserModule,
     EntidadModule,
@@ -44,6 +51,9 @@ import { UserRole } from './modules/users/entities/user-role.entity';
     MovimientosModule,
     InventarioModule,
     PeriodosModule,
+    ReportesModule,
+    DashboardModule,
+    CuentaModule,
   ],
   controllers: [AppController, ComprobanteController],
   providers: [AppService, DatabaseSeedService],

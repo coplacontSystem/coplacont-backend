@@ -6,6 +6,7 @@ import {
   OneToMany,
   OneToOne,
   PrimaryGeneratedColumn,
+  Index,
 } from 'typeorm';
 import { ComprobanteDetalle } from './comprobante-detalle';
 import { ComprobanteTotales } from './comprobante-totales';
@@ -15,6 +16,8 @@ import { PeriodoContable } from '../../periodos/entities/periodo-contable.entity
 import { TablaDetalle } from './tabla-detalle.entity';
 import { Moneda } from '../enum/tipo-moneda.enum';
 
+// Índices para las consultas de stock, kardex y reportes
+@Index('IDX_comprobante_persona_operacion', ['persona', 'tipoOperacion'])
 @Entity({ name: 'comprobante' })
 export class Comprobante {
   @PrimaryGeneratedColumn()

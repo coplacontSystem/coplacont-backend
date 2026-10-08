@@ -67,7 +67,7 @@ export class ProductoService {
       );
     } else {
       const existingProducto = await this.productoRepository.findOne({
-        where: { codigo },
+        where: { codigo, persona: { id: personaId } },
       });
 
       if (existingProducto) {

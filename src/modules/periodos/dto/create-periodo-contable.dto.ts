@@ -6,7 +6,9 @@ import {
   IsString,
   Min,
   Max,
+  IsEnum,
 } from 'class-validator';
+import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
 import { ApiProperty } from '@nestjs/swagger';
 
 /**
@@ -59,9 +61,15 @@ export class CreatePeriodoContableDto {
     description: 'ID de la persona/empresa propietaria del período',
     example: 1,
   })
-  @IsNotEmpty({ message: 'El ID de la persona es requerido' })
+  @IsOptional()
   @IsNumber({}, { message: 'El ID de la persona debe ser un número' })
-  idPersona: number;
+  idPersona?: number;
+
+  /** Método con que se valoriza el kardex del período; por defecto, el vigente */
+  @ApiProperty({ enum: MetodoValoracion, required: false })
+  @IsOptional()
+  @IsEnum(MetodoValoracion, { message: 'Método de valoración inválido' })
+  metodoValoracion?: MetodoValoracion;
 
   /**
    * Observaciones del período

@@ -13,9 +13,9 @@ export class MovimientoFactory {
   constructor() {}
 
   /**
-   * Crea un movimiento desde un comprobante
-   * Utiliza el método de costeo promedio ponderado para calcular los costos en ventas
-   * Para compras usa el precio unitario original del comprobante
+   * Crea un movimiento desde un comprobante.
+   * El tipo (entrada/salida) lo decide quien registra el comprobante, según la
+   * operación y el tipo de comprobante (ver reglas-registro.ts).
    */
   createMovimientoFromComprobante(
     comprobante: Comprobante,
@@ -25,8 +25,8 @@ export class MovimientoFactory {
       costoUnitarioDeLote: number;
       cantidad: number;
     }[],
+    tipoMovimiento: TipoMovimiento,
   ): CreateMovimientoDto {
-    const tipoMovimiento = this.generateTipoFromComprobante(comprobante);
     const modoOperacion =
       tipoMovimiento === TipoMovimiento.ENTRADA ? 'COMPRA' : 'VENTA';
     const detalles = this.createMovimientosDetallesFromDetallesComprobante(
@@ -36,24 +36,11 @@ export class MovimientoFactory {
       precioYcantidadPorLote,
     );
 
-    const em = new Date(comprobante.fechaEmision as any);
-    const now = new Date();
-    const movementDate = new Date(
-      Date.UTC(
-        em.getUTCFullYear(),
-        em.getUTCMonth(),
-        em.getUTCDate(),
-        now.getUTCHours(),
-        now.getUTCMinutes(),
-        now.getUTCSeconds(),
-        now.getUTCMilliseconds(),
-      ),
-    );
-
     return {
       numeroDocumento: comprobante.serie + '-' + comprobante.numero,
       tipo: tipoMovimiento,
-      fecha: movementDate,
+      // Misma fecha contable que el comprobante
+      fecha: new Date(comprobante.fechaEmision),
       observaciones: `Movimiento generado desde comprobante ${comprobante.serie}-${comprobante.numero}`,
       estado: EstadoMovimiento.PROCESADO,
       idComprobante: comprobante.idComprobante,
@@ -92,7 +79,7 @@ export class MovimientoFactory {
       if (!(op === 'COMPRA' || op.includes('ENTRADA'))) {
         // Obtener los lotes correspondientes a este detalle
         const lotesParaEsteDetalle: CreateDetalleSalidaDto[] = [];
-        let cantidadRestante = detalle.cantidad;
+        let cantidadRestante = Number(detalle.cantidad);
 
         while (
           cantidadRestante > 0 &&
@@ -143,50 +130,5 @@ export class MovimientoFactory {
     }
 
     return movimientoDetalles;
-  }
-
-  private generateTipoFromComprobante(
-    comprobante: Comprobante,
-  ): TipoMovimiento {
-    const desc = (comprobante.tipoOperacion?.descripcion || '')
-      .trim()
-      .toUpperCase();
-    const cod = (comprobante.tipoOperacion?.codigo || '').trim();
-    if (
-      desc === 'COMPRA' ||
-      cod === '02' ||
-      desc.includes('ENTRADA') ||
-      desc.includes('INGRESO')
-    )
-      return TipoMovimiento.ENTRADA;
-    if (
-      desc === 'VENTA' ||
-      cod === '01' ||
-      desc.includes('SALIDA') ||
-      desc.includes('EGRESO')
-    )
-      return TipoMovimiento.SALIDA;
-
-    if (
-      cod === '07' ||
-      desc.includes('NOTA DE CRÉDITO') ||
-      desc.includes('NOTA DE CREDITO')
-    ) {
-      const afectoCod = comprobante.comprobanteAfecto?.tipoOperacion?.codigo;
-      if (afectoCod === '01') return TipoMovimiento.ENTRADA; // NC sobre venta: entrada
-      if (afectoCod === '02') return TipoMovimiento.SALIDA; // NC sobre compra: salida
-    }
-    if (
-      cod === '08' ||
-      desc.includes('NOTA DE DÉBITO') ||
-      desc.includes('NOTA DE DEBITO')
-    ) {
-      const afectoCod = comprobante.comprobanteAfecto?.tipoOperacion?.codigo;
-      if (afectoCod === '01') return TipoMovimiento.SALIDA; // ND sobre venta: salida
-      if (afectoCod === '02') return TipoMovimiento.ENTRADA; // ND sobre compra: entrada
-    }
-    throw new Error(
-      `Tipo de operación no soportado: ${comprobante.tipoOperacion?.descripcion}`,
-    );
   }
 }

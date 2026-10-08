@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
+import { IsString, IsOptional } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 /**
@@ -12,7 +12,8 @@ export class CerrarPeriodoDto {
     description: 'Usuario que cierra el período',
     example: 'admin@empresa.com',
   })
-  @IsNotEmpty({ message: 'El usuario es requerido' })
+  // Lo completa el servidor con el usuario autenticado
+  @IsOptional()
   @IsString({ message: 'El usuario debe ser texto' })
   usuarioCierre: string;
 

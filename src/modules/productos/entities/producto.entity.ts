@@ -1,6 +1,7 @@
 import {
   Column,
   Entity,
+  Unique,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -13,6 +14,8 @@ import { Persona } from '../../users/entities/persona.entity';
  * Entidad que representa un producto en el sistema
  * Contiene información básica del producto y su relación con categoría
  */
+// El código es único dentro de cada empresa (dos empresas pueden usar el mismo)
+@Unique('UQ_producto_codigo_persona', ['codigo', 'persona'])
 @Entity({ name: 'producto' })
 export class Producto {
   @PrimaryGeneratedColumn()
@@ -66,7 +69,7 @@ export class Producto {
   /**
    * Código único del producto (opcional)
    */
-  @Column({ length: 50, nullable: true, unique: true })
+  @Column({ length: 50, nullable: true })
   codigo: string;
 
   /**

@@ -1,13 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InventarioLote } from '../entities/inventario-lote.entity';
-import { Inventario } from '../entities/inventario.entity';
-import { MovimientoDetalle } from '../../movimientos/entities/movimiento-detalle.entity';
-import { DetalleSalida } from '../../movimientos/entities/detalle-salida.entity';
-import { TipoMovimiento } from '../../movimientos/enum/tipo-movimiento.enum';
-import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
-import { StockCacheService } from './stock-cache.service';
+import {
+  KardexMaterializadoService,
+  leerKardexMaterializado,
+} from '../valoracion/kardex-materializado.service';
 
 /**
  * Interfaz para el resultado del cálculo de stock de lote
@@ -32,16 +30,6 @@ export interface InventarioStockResult {
 }
 
 /**
- * Interfaz para lotes disponibles para FIFO
- */
-export interface LoteDisponible {
-  idLote: number;
-  cantidadDisponible: number;
-  costoUnitario: number;
-  fechaIngreso: Date;
-}
-
-/**
  * Servicio para cálculo dinámico de stock de lotes e inventarios
  * Elimina la necesidad de mantener campos calculados en las entidades
  */
@@ -50,14 +38,8 @@ export class StockCalculationService {
   constructor(
     @InjectRepository(InventarioLote)
     private readonly loteRepository: Repository<InventarioLote>,
-    @InjectRepository(Inventario)
-    private readonly inventarioRepository: Repository<Inventario>,
-    @InjectRepository(MovimientoDetalle)
-    private readonly movimientoDetalleRepository: Repository<MovimientoDetalle>,
-    private readonly stockCacheService: StockCacheService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
-
-  private readonly logger = new Logger(StockCalculationService.name);
 
   /**
    * Calcula el stock actual de un lote específico
@@ -69,142 +51,26 @@ export class StockCalculationService {
     idLote: number,
     fechaHasta?: Date,
   ): Promise<LoteStockResult | null> {
-    const cachedResult = this.stockCacheService.getLoteStock(
-      idLote,
-      fechaHasta,
-    );
-    if (cachedResult && !fechaHasta) {
-      return cachedResult;
-    }
-
-    // Obtener información base del lote
     const lote = await this.loteRepository.findOne({
       where: { id: idLote },
-      select: [
-        'id',
-        'cantidadInicial',
-        'costoUnitario',
-        'fechaIngreso',
-        'numeroLote',
-      ],
+      relations: ['inventario'],
     });
+    if (!lote) return null;
 
-    if (!lote) {
-      return null;
-    }
-
-    this.logger.log(
-      `🔍 [STOCK-TRACE] Lote=${idLote} - Inicio cálculo${fechaHasta ? ` hasta ${fechaHasta.toISOString().split('T')[0]}` : ''}`,
-    );
-    // Calcular movimientos que afectan este lote
-    const queryBuilder = this.movimientoDetalleRepository
-      .createQueryBuilder('md')
-      .innerJoin('md.movimiento', 'm')
-      .where('md.idLote = :idLote', { idLote })
-      .andWhere('m.estado = :estado', { estado: 'PROCESADO' });
-
-    if (fechaHasta) {
-      queryBuilder.andWhere('m.fecha <= :fechaHasta', { fechaHasta });
-    }
-
-    const entradasRow = await this.movimientoDetalleRepository
-      .createQueryBuilder('md')
-      .innerJoin('md.movimiento', 'm')
-      .select('COALESCE(SUM(md.cantidad), 0)', 'total')
-      .where('md.idLote = :idLote', { idLote })
-      .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
-      .andWhere('m.tipo = :tipo', { tipo: TipoMovimiento.ENTRADA })
-      .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
-      .getRawOne<{ total: string | number }>();
-
-    const ajustesRow = await this.movimientoDetalleRepository
-      .createQueryBuilder('md')
-      .innerJoin('md.movimiento', 'm')
-      .select('COALESCE(SUM(md.cantidad), 0)', 'total')
-      .where('md.idLote = :idLote', { idLote })
-      .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
-      .andWhere('m.tipo = :tipo', { tipo: TipoMovimiento.AJUSTE })
-      .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
-      .getRawOne<{ total: string | number }>();
-
-    const salidasRow = await this.movimientoDetalleRepository
-      .createQueryBuilder('md')
-      .innerJoin('md.movimiento', 'm')
-      .innerJoin(DetalleSalida, 'ds', 'ds.id_movimiento_detalle = md.id')
-      .select('COALESCE(SUM(ds.cantidad), 0)', 'total')
-      .where('ds.id_lote = :idLote', { idLote })
-      .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
-      .andWhere('m.tipo = :tipo', { tipo: TipoMovimiento.SALIDA })
-      .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
-      .getRawOne<{ total: string | number }>();
-
-    const entradas = parseFloat(String(entradasRow?.total ?? 0)) || 0;
-    const salidas = parseFloat(String(salidasRow?.total ?? 0)) || 0;
-    const ajustes = parseFloat(String(ajustesRow?.total ?? 0)) || 0;
-
-    const tieneMovimientos = entradas > 0 || salidas > 0 || ajustes > 0;
-    let cantidadActual: number;
-
-    if (tieneMovimientos) {
-      cantidadActual = entradas - salidas + ajustes;
-    } else {
-      if (!fechaHasta) {
-        cantidadActual = Number(lote.cantidadInicial) || 0;
-      } else {
-        const hastaYmd = new Date(
-          fechaHasta.getFullYear(),
-          fechaHasta.getMonth(),
-          fechaHasta.getDate(),
-        );
-
-        const invInit = await this.movimientoDetalleRepository
-          .createQueryBuilder('md')
-          .innerJoin('md.movimiento', 'm')
-          .select(['m.fecha as fecha', 'm.numeroDocumento as numero'])
-          .where('md.idLote = :idLote', { idLote })
-          .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
-          .andWhere('m.numeroDocumento = :doc', { doc: 'INV-INIT' })
-          .getRawOne<{ fecha: Date; numero: string }>();
-
-        if (invInit && invInit.fecha) {
-          const f = new Date(invInit.fecha);
-          const initYmd = new Date(f.getFullYear(), f.getMonth(), f.getDate());
-          cantidadActual =
-            initYmd.getTime() <= hastaYmd.getTime()
-              ? Number(lote.cantidadInicial) || 0
-              : 0;
-        } else {
-          const ingreso = new Date(lote.fechaIngreso);
-          const ingresoYmd = new Date(
-            ingreso.getFullYear(),
-            ingreso.getMonth(),
-            ingreso.getDate(),
-          );
-          cantidadActual =
-            ingresoYmd.getTime() <= hastaYmd.getTime()
-              ? Number(lote.cantidadInicial) || 0
-              : 0;
-        }
+    // Misma regla que el cálculo por inventario (una sola implementación)
+    const stock = (
+      await this.calcularStockInventarios([lote.inventario.id], fechaHasta)
+    ).get(Number(lote.inventario.id));
+    return (
+      stock?.lotes.find((l) => l.idLote === Number(idLote)) ?? {
+        idLote: Number(lote.id),
+        cantidadActual: 0,
+        cantidadInicial: Number(lote.cantidadInicial),
+        costoUnitario: Number(lote.costoUnitario),
+        fechaIngreso: new Date(lote.fechaIngreso),
+        numeroLote: lote.numeroLote,
       }
-    }
-
-    const result = {
-      idLote: lote.id,
-      cantidadActual: Math.max(0, cantidadActual), // No permitir stock negativo
-      cantidadInicial: Number(lote.cantidadInicial),
-      costoUnitario: Number(lote.costoUnitario),
-      fechaIngreso: new Date(lote.fechaIngreso), // Asegurar que sea un objeto Date
-      numeroLote: lote.numeroLote,
-    };
-
-    this.logger.log(
-      `✅ [STOCK-TRACE] Lote=${idLote} Base=${tieneMovimientos ? 0 : Number(lote.cantidadInicial)} Entradas=${entradas} Salidas=${salidas} Ajustes=${ajustes} Actual=${result.cantidadActual} CostoUnitario=${result.costoUnitario}`,
     );
-
-    // Guardar en caché
-    this.stockCacheService.setLoteStock(idLote, fechaHasta, result);
-
-    return result;
   }
 
   /**
@@ -217,261 +83,208 @@ export class StockCalculationService {
     idInventario: number,
     fechaHasta?: Date,
   ): Promise<InventarioStockResult | null> {
-    // Para el método FIFO, necesitamos siempre calcular los lotes individuales
-    // No usar caché cuando se necesiten los detalles de lotes
-    const cachedResult = this.stockCacheService.getInventarioStock(
-      idInventario,
-      fechaHasta,
-    );
-    if (cachedResult && !fechaHasta) {
-      // Solo usar caché para consultas sin fecha específica y cuando no se necesiten lotes
-      const inventario = await this.inventarioRepository.findOne({
-        where: { id: idInventario },
-        relations: ['lotes'],
+    // Sin caché en memoria: el cálculo agregado son tres consultas y un caché
+    // por proceso se desincroniza cuando hay varias instancias del servidor
+    const resultado = (
+      await this.calcularStockInventarios([idInventario], fechaHasta)
+    ).get(Number(idInventario)); // los ids bigint pueden llegar como texto
+    return resultado ?? null;
+  }
+
+  /**
+   * Stock de varios inventarios. Lee el saldo del kardex materializado
+   * (el costo promedio es el valor del saldo según el método de valoración).
+   */
+  async calcularStockInventarios(
+    idsInventario: number[],
+    fechaHasta?: Date,
+  ): Promise<Map<number, InventarioStockResult>> {
+    if (!leerKardexMaterializado()) {
+      return this.calcularStockDinamico(idsInventario, fechaHasta);
+    }
+    // fechaHasta es fin de día en hora local: su día calendario local
+    const hastaDia = fechaHasta
+      ? `${fechaHasta.getFullYear()}-${String(fechaHasta.getMonth() + 1).padStart(2, '0')}-${String(fechaHasta.getDate()).padStart(2, '0')}`
+      : undefined;
+    const saldos = await this.kardex.saldos(idsInventario, hastaDia);
+    const resultado = new Map<number, InventarioStockResult>();
+    for (const [id, saldo] of saldos) {
+      resultado.set(id, {
+        idInventario: id,
+        stockActual: saldo.cantidad,
+        costoPromedioActual: saldo.costoUnitario,
+        lotes: saldo.lotes.map((l) => ({
+          idLote: l.idLote,
+          cantidadActual: l.cantidad,
+          cantidadInicial: l.cantidadInicial,
+          costoUnitario: l.costoUnitario,
+          fechaIngreso: l.fechaIngreso,
+          numeroLote: l.numeroLote,
+        })),
       });
-
-      if (!inventario) return null;
-
-      this.logger.log(
-        `⚡ [STOCK-TRACE] Cache Inventario=${idInventario} Stock=${cachedResult.stockActual} CostoPromedio=${cachedResult.costoPromedioActual}`,
-      );
-      return {
-        idInventario,
-        stockActual: cachedResult.stockActual,
-        costoPromedioActual: cachedResult.costoPromedioActual,
-        lotes: [], // Los lotes se calculan dinámicamente cuando se necesiten
-      };
     }
-    // Verificar que el inventario existe
-    const inventario = await this.inventarioRepository.findOne({
-      where: { id: idInventario },
-    });
-
-    if (!inventario) {
-      return null;
-    }
-
-    // Obtener todos los lotes del inventario
-    const lotes = await this.loteRepository.find({
-      where: { inventario: { id: idInventario } },
-      select: [
-        'id',
-        'cantidadInicial',
-        'costoUnitario',
-        'fechaIngreso',
-        'numeroLote',
-      ],
-      order: { fechaIngreso: 'ASC' },
-    });
-
-    // Calcular stock de cada lote
-    const lotesConStock: LoteStockResult[] = [];
-    let stockTotal = 0;
-    let valorTotal = 0;
-
-    this.logger.log(
-      `🔍 [STOCK-TRACE] Inventario=${idInventario} Lotes=${lotes.length}`,
-    );
-
-    for (const lote of lotes) {
-      const stockLote = await this.calcularStockLote(lote.id, fechaHasta);
-      if (stockLote && stockLote.cantidadActual > 0) {
-        lotesConStock.push(stockLote);
-        stockTotal += stockLote.cantidadActual;
-        valorTotal += stockLote.cantidadActual * stockLote.costoUnitario;
-      }
-    }
-
-    // Ajuste por salidas registradas sin asignación de lote (idLote=0)
-    const salidasFicticiasRow = await this.movimientoDetalleRepository
-      .createQueryBuilder('md')
-      .innerJoin('md.movimiento', 'm')
-      .innerJoin(DetalleSalida, 'ds', 'ds.id_movimiento_detalle = md.id')
-      .select('COALESCE(SUM(ds.cantidad), 0)', 'total')
-      .where('md.idInventario = :idInventario', { idInventario })
-      .andWhere('m.estado = :estado', { estado: 'PROCESADO' })
-      .andWhere('m.tipo = :tipo', { tipo: TipoMovimiento.SALIDA })
-      .andWhere('ds.id_lote = 0')
-      .andWhere(fechaHasta ? 'm.fecha <= :fechaHasta' : '1=1', { fechaHasta })
-      .getRawOne<{ total: string | number }>();
-
-    const salidasFicticias =
-      parseFloat(String(salidasFicticiasRow?.total ?? 0)) || 0;
-    const stockTotalAjustado = Math.max(0, stockTotal - salidasFicticias);
-
-    const costoPromedioActual =
-      stockTotalAjustado > 0 ? valorTotal / stockTotalAjustado : 0;
-
-    this.logger.log(
-      `✅ [STOCK-TRACE] Inventario=${idInventario} StockTotal=${stockTotalAjustado} CostoPromedio=${costoPromedioActual} ValorTotal=${valorTotal}`,
-    );
-    const result = {
-      idInventario,
-      stockActual: stockTotalAjustado,
-      costoPromedioActual,
-      lotes: lotesConStock,
-    };
-
-    // Guardar en caché (solo los datos básicos)
-    this.stockCacheService.setInventarioStock(idInventario, fechaHasta, {
-      stockActual: stockTotalAjustado,
-      costoPromedioActual: costoPromedioActual,
-      valorTotal: stockTotalAjustado * costoPromedioActual,
-    });
-
-    return result;
+    return resultado;
   }
 
   /**
-   * Obtiene los lotes disponibles para consumo FIFO
-   * @param idInventario ID del inventario
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns Lotes ordenados por FIFO con stock disponible
+   * Stock calculado desde los movimientos con tres consultas agregadas
+   * (fase 3). Se usa con KARDEX_MATERIALIZADO=false para comparar.
    */
-  async obtenerLotesDisponiblesFIFO(
-    idInventario: number,
+  private async calcularStockDinamico(
+    idsInventario: number[],
     fechaHasta?: Date,
-  ): Promise<LoteDisponible[]> {
-    const stockInventario = await this.calcularStockInventario(
-      idInventario,
-      fechaHasta,
-    );
-    if (!stockInventario) {
-      return [];
+  ): Promise<Map<number, InventarioStockResult>> {
+    const ids = [...new Set(idsInventario.map(Number))];
+    const resultado = new Map<number, InventarioStockResult>();
+    if (ids.length === 0) return resultado;
+
+    const manager = this.loteRepository.manager;
+    const params: unknown[] = [ids];
+    let filtroFecha = '';
+    if (fechaHasta) {
+      params.push(fechaHasta);
+      filtroFecha = 'AND m.fecha <= $2';
     }
 
-    const lotesDisponibles = stockInventario.lotes
-      .filter((lote) => lote.cantidadActual > 0)
-      .map((lote) => ({
-        idLote: lote.idLote,
-        cantidadDisponible: lote.cantidadActual,
-        costoUnitario: lote.costoUnitario,
-        fechaIngreso: lote.fechaIngreso,
-      }))
-      .sort((a, b) => a.fechaIngreso.getTime() - b.fechaIngreso.getTime());
-
-    return lotesDisponibles;
-  }
-
-  /**
-   * Calcula el costo promedio ponderado de un inventario
-   * @param idInventario ID del inventario
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns Costo promedio ponderado
-   */
-  async calcularCostoPromedio(
-    idInventario: number,
-    fechaHasta?: Date,
-  ): Promise<number> {
-    const stockInventario = await this.calcularStockInventario(
-      idInventario,
-      fechaHasta,
+    const existentes: { id: string }[] = await manager.query(
+      'SELECT id FROM inventario WHERE id = ANY($1)',
+      [ids],
     );
-    return stockInventario?.costoPromedioActual || 0;
-  }
-
-  /**
-   * Verifica si hay stock suficiente para una operación
-   * @param idInventario ID del inventario
-   * @param cantidadRequerida Cantidad requerida
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns True si hay stock suficiente
-   */
-  async verificarStockSuficiente(
-    idInventario: number,
-    cantidadRequerida: number,
-    fechaHasta?: Date,
-  ): Promise<boolean> {
-    const stockInventario = await this.calcularStockInventario(
-      idInventario,
-      fechaHasta,
-    );
-    return stockInventario
-      ? stockInventario.stockActual >= cantidadRequerida
-      : false;
-  }
-
-  /**
-   * Calcula el consumo de lotes para una cantidad específica usando FIFO
-   * @param idInventario ID del inventario
-   * @param cantidadAConsumir Cantidad a consumir
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns Detalle del consumo por lotes
-   */
-  async calcularConsumoFIFO(
-    idInventario: number,
-    cantidadAConsumir: number,
-    fechaHasta?: Date,
-  ): Promise<{ idLote: number; cantidad: number; costoUnitario: number }[]> {
-    const lotesDisponibles = await this.obtenerLotesDisponiblesFIFO(
-      idInventario,
-      fechaHasta,
-    );
-
-    const consumo: {
-      idLote: number;
-      cantidad: number;
-      costoUnitario: number;
-    }[] = [];
-    let cantidadRestante = cantidadAConsumir;
-
-    for (const lote of lotesDisponibles) {
-      if (cantidadRestante <= 0) break;
-
-      const cantidadDelLote = Math.min(
-        cantidadRestante,
-        lote.cantidadDisponible,
-      );
-
-      consumo.push({
-        idLote: lote.idLote,
-        cantidad: cantidadDelLote,
-        costoUnitario: lote.costoUnitario,
+    for (const { id } of existentes) {
+      resultado.set(Number(id), {
+        idInventario: Number(id),
+        stockActual: 0,
+        costoPromedioActual: 0,
+        lotes: [],
       });
-
-      cantidadRestante -= cantidadDelLote;
     }
 
-    if (cantidadRestante > 0) {
-      throw new Error(`Stock insuficiente. Faltante: ${cantidadRestante}`);
-    }
+    const lotes: {
+      id: string;
+      id_inventario: string;
+      cantidad_inicial: string;
+      costo_unitario: string;
+      fecha_ingreso: Date;
+      numero_lote: string;
+      entradas: string;
+      ajustes: string;
+      salidas: string;
+      fecha_init: Date | null;
+    }[] = await manager.query(
+      `WITH lotes AS (
+         SELECT * FROM inventario_lote WHERE id_inventario = ANY($1)
+       ),
+       mov AS (
+         SELECT md.id_lote,
+                SUM(CASE WHEN m.tipo = 'ENTRADA' THEN md.cantidad ELSE 0 END) AS entradas,
+                SUM(CASE WHEN m.tipo = 'AJUSTE' THEN md.cantidad ELSE 0 END) AS ajustes
+           FROM movimiento_detalles md
+           JOIN movimientos m ON m.id = md.id_movimiento
+          WHERE m.estado = 'PROCESADO' AND md.id_lote IN (SELECT id FROM lotes) ${filtroFecha}
+          GROUP BY md.id_lote
+       ),
+       sal AS (
+         SELECT ds.id_lote, SUM(ds.cantidad) AS salidas
+           FROM detalle_salidas ds
+           JOIN movimiento_detalles md ON md.id = ds.id_movimiento_detalle
+           JOIN movimientos m ON m.id = md.id_movimiento
+          WHERE m.estado = 'PROCESADO' AND m.tipo = 'SALIDA'
+            AND ds.id_lote IN (SELECT id FROM lotes) ${filtroFecha}
+          GROUP BY ds.id_lote
+       ),
+       init AS (
+         SELECT md.id_lote, MIN(m.fecha) AS fecha_init
+           FROM movimiento_detalles md
+           JOIN movimientos m ON m.id = md.id_movimiento
+          WHERE m.estado = 'PROCESADO' AND m."numeroDocumento" = 'INV-INIT'
+            AND md.id_lote IN (SELECT id FROM lotes)
+          GROUP BY md.id_lote
+       )
+       SELECT l.id, l.id_inventario, l."cantidadInicial" AS cantidad_inicial,
+              l."costoUnitario" AS costo_unitario, l."fechaIngreso" AS fecha_ingreso,
+              l."numeroLote" AS numero_lote,
+              COALESCE(mov.entradas, 0) AS entradas, COALESCE(mov.ajustes, 0) AS ajustes,
+              COALESCE(sal.salidas, 0) AS salidas, init.fecha_init
+         FROM lotes l
+         LEFT JOIN mov ON mov.id_lote = l.id
+         LEFT JOIN sal ON sal.id_lote = l.id
+         LEFT JOIN init ON init.id_lote = l.id
+        ORDER BY l."fechaIngreso" ASC, l.id ASC`,
+      params,
+    );
 
-    return consumo;
-  }
+    const dia = (d: Date) =>
+      new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const valorPorInventario = new Map<number, number>();
 
-  /**
-   * Calcula el costo unitario para una venta usando el método especificado
-   * @param idInventario ID del inventario
-   * @param cantidadVenta Cantidad de la venta
-   * @param metodoValoracion Método de valoración (FIFO o PROMEDIO)
-   * @param fechaHasta Fecha límite para el cálculo (opcional)
-   * @returns Costo unitario calculado
-   */
-  async calcularCostoUnitarioVenta(
-    idInventario: number,
-    cantidadVenta: number,
-    metodoValoracion: MetodoValoracion,
-    fechaHasta?: Date,
-  ): Promise<number> {
-    if (metodoValoracion === MetodoValoracion.PROMEDIO) {
-      return await this.calcularCostoPromedio(idInventario, fechaHasta);
-    } else {
-      // FIFO: calcular costo promedio ponderado de los lotes que se van a consumir
-      const consumo = await this.calcularConsumoFIFO(
-        idInventario,
-        cantidadVenta,
-        fechaHasta,
-      );
+    for (const l of lotes) {
+      const entradas = Number(l.entradas) || 0;
+      const salidas = Number(l.salidas) || 0;
+      const ajustes = Number(l.ajustes) || 0;
+      const inicial = Number(l.cantidad_inicial) || 0;
 
-      let costoTotal = 0;
-      let cantidadTotal = 0;
-
-      for (const item of consumo) {
-        costoTotal += item.cantidad * item.costoUnitario;
-        cantidadTotal += item.cantidad;
+      let cantidadActual: number;
+      if (entradas > 0 || salidas > 0 || ajustes > 0) {
+        cantidadActual = entradas - salidas + ajustes;
+      } else if (!fechaHasta) {
+        cantidadActual = inicial;
+      } else {
+        // Lote sin movimientos: cuenta su cantidad inicial desde su fecha de alta
+        const desde = l.fecha_init
+          ? new Date(l.fecha_init)
+          : new Date(l.fecha_ingreso);
+        cantidadActual = dia(desde) <= dia(fechaHasta) ? inicial : 0;
       }
+      cantidadActual = Math.max(0, cantidadActual);
+      if (cantidadActual <= 0) continue;
 
-      return cantidadTotal > 0 ? costoTotal / cantidadTotal : 0;
+      const idInventario = Number(l.id_inventario);
+      const stock = resultado.get(idInventario);
+      if (!stock) continue;
+      const costoUnitario = Number(l.costo_unitario);
+      stock.lotes.push({
+        idLote: Number(l.id),
+        cantidadActual,
+        cantidadInicial: inicial,
+        costoUnitario,
+        fechaIngreso: new Date(l.fecha_ingreso),
+        numeroLote: l.numero_lote,
+      });
+      stock.stockActual += cantidadActual;
+      valorPorInventario.set(
+        idInventario,
+        (valorPorInventario.get(idInventario) ?? 0) +
+          cantidadActual * costoUnitario,
+      );
     }
+
+    // Salidas registradas sin asignación de lote (id_lote = 0)
+    const ficticias: { id_inventario: string; total: string }[] =
+      await manager.query(
+        `SELECT md.id_inventario, COALESCE(SUM(ds.cantidad), 0) AS total
+           FROM movimiento_detalles md
+           JOIN movimientos m ON m.id = md.id_movimiento
+           JOIN detalle_salidas ds ON ds.id_movimiento_detalle = md.id
+          WHERE md.id_inventario = ANY($1) AND m.estado = 'PROCESADO'
+            AND m.tipo = 'SALIDA' AND ds.id_lote = 0 ${filtroFecha}
+          GROUP BY md.id_inventario`,
+        params,
+      );
+    const ficticiasPorInventario = new Map(
+      ficticias.map((f) => [Number(f.id_inventario), Number(f.total) || 0]),
+    );
+
+    for (const stock of resultado.values()) {
+      const ajustado = Math.max(
+        0,
+        stock.stockActual -
+          (ficticiasPorInventario.get(stock.idInventario) ?? 0),
+      );
+      const valor = valorPorInventario.get(stock.idInventario) ?? 0;
+      stock.stockActual = ajustado;
+      stock.costoPromedioActual = ajustado > 0 ? valor / ajustado : 0;
+    }
+
+    return resultado;
   }
 }

@@ -1,3 +1,5 @@
+import { ReportesModule } from '../reportes/reportes.module';
+import { PlantillasReportes } from './reportes/plantillas.reportes';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Comprobante } from './entities/comprobante';
@@ -10,7 +12,6 @@ import { PeriodoContable } from '../periodos/entities/periodo-contable.entity';
 import { ComprobanteController } from './controller/comprobante.controller';
 import { ComprasController } from './controller/compras.controller';
 import { VentasController } from './controller/ventas.controller';
-import { TestComprobanteController } from './controller/test-comprobante.controller';
 import { TransferenciasController } from './controller/transferencias.controller';
 import { ComprobanteService } from './service/comprobante.service';
 import { ComprasService } from './service/compras.service';
@@ -40,15 +41,16 @@ import { PeriodosModule } from '../periodos/periodos.module';
     InventarioModule,
     UserModule,
     PeriodosModule,
+    ReportesModule,
   ],
   controllers: [
     ComprobanteController,
     ComprasController,
     VentasController,
-    TestComprobanteController,
     TransferenciasController,
   ],
   providers: [
+    PlantillasReportes,
     ComprobanteService,
     ComprasService,
     VentasService,

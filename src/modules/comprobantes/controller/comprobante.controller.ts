@@ -1,3 +1,5 @@
+import { Pagina, PaginacionDto } from 'src/common/paginacion';
+import { empresaDe } from 'src/common/empresa';
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiOperation,
@@ -49,11 +51,9 @@ export class ComprobanteController {
   })
   findAll(
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<ResponseComprobanteDto[]> {
-    if (!user.personaId) {
-      throw new Error('Usuario no tiene una empresa asociada');
-    }
-    return this.comprobanteService.findAll(user.personaId);
+    @Query() paginacion: PaginacionDto,
+  ): Promise<ResponseComprobanteDto[] | Pagina<ResponseComprobanteDto>> {
+    return this.comprobanteService.findAll(empresaDe(user), paginacion);
   }
 
   @Get('siguiente-correlativo')

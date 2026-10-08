@@ -4,12 +4,14 @@ dotenv.config();
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { setupSwagger } from './config/swagger.config';
+import { configureApp } from './config/app.config';
 import {
   addTransactionalDataSource,
   initializeTransactionalContext,
 } from 'typeorm-transactional';
 import { DataSource } from 'typeorm';
 import { ExpressAdapter } from '@nestjs/platform-express';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import express from 'express';
 import type { Express, Request, Response, NextFunction } from 'express';
 
@@ -23,21 +25,17 @@ async function createApp(): Promise<Express> {
   initializeTransactionalContext();
 
   const expressApp: Express = express();
-  const app = await NestFactory.create(
+  const app = await NestFactory.create<NestExpressApplication>(
     AppModule,
     new ExpressAdapter(expressApp),
   );
+  // Foto de perfil y logo viajan como data URL dentro del JSON
+  app.useBodyParser('json', { limit: '3mb' });
 
   const dataSource = app.get(DataSource);
   addTransactionalDataSource(dataSource);
 
-  // Habilitar CORS
-  app.enableCors({
-    origin: true, // Permitir todos los orígenes
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Métodos HTTP permitidos
-    allowedHeaders: ['Content-Type', 'Authorization'], // Headers permitidos
-    credentials: true, // Permitir cookies y credenciales
-  });
+  configureApp(app);
 
   // Configurar Swagger
   setupSwagger(app);

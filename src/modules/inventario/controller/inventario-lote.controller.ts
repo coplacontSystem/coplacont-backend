@@ -11,6 +11,7 @@ import {
   HttpStatus,
   UseInterceptors,
   ClassSerializerInterceptor,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -25,16 +26,35 @@ import { CreateInventarioLoteDto } from '../dto/inventario-lote/create-inventari
 import { UpdateInventarioLoteDto } from '../dto/inventario-lote/update-inventario-lote.dto';
 import { ResponseInventarioLoteDto } from '../dto/inventario-lote/response-inventario-lote.dto';
 import { plainToClass } from 'class-transformer';
+import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
+import { CurrentUser } from '../../users/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../../users/decorators/current-user.decorator';
+import { PertenenciaService } from '../../../common/pertenencia.service';
+import { empresaDe } from '../../../common/empresa';
 
 /**
  * Controlador para la gestión de lotes de inventario
  * Maneja las operaciones CRUD y consultas específicas de lotes para el Kardex
  */
 @ApiTags('Inventario Lotes')
+@UseGuards(JwtAuthGuard)
 @Controller('/api/inventario-lote')
 @UseInterceptors(ClassSerializerInterceptor)
 export class InventarioLoteController {
-  constructor(private readonly inventarioLoteService: InventarioLoteService) {}
+  constructor(
+    private readonly inventarioLoteService: InventarioLoteService,
+    private readonly pertenencia: PertenenciaService,
+  ) {}
+
+  /** Deja solo los lotes cuyos inventarios pertenecen a la empresa del usuario. */
+  private async soloDeEmpresa<
+    T extends { inventario?: { id: number | string } },
+  >(lotes: T[], user: AuthenticatedUser): Promise<T[]> {
+    const propios = await this.pertenencia.inventariosDeEmpresa(
+      empresaDe(user),
+    );
+    return lotes.filter((l) => propios.has(Number(l.inventario?.id)));
+  }
 
   /**
    * Crear un nuevo lote de inventario
@@ -61,7 +81,12 @@ export class InventarioLoteController {
   })
   async create(
     @Body() createInventarioLoteDto: CreateInventarioLoteDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioLoteDto> {
+    await this.pertenencia.inventarios(
+      [createInventarioLoteDto.idInventario],
+      empresaDe(user),
+    );
     const lote = await this.inventarioLoteService.create(
       createInventarioLoteDto,
     );
@@ -81,8 +106,13 @@ export class InventarioLoteController {
     description: 'Lista de lotes obtenida exitosamente',
     type: [ResponseInventarioLoteDto],
   })
-  async findAll(): Promise<ResponseInventarioLoteDto[]> {
-    const lotes = await this.inventarioLoteService.findAll();
+  async findAll(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ResponseInventarioLoteDto[]> {
+    const lotes = await this.soloDeEmpresa(
+      await this.inventarioLoteService.findAll(),
+      user,
+    );
     return lotes.map((lote) => plainToClass(ResponseInventarioLoteDto, lote));
   }
 
@@ -106,7 +136,9 @@ export class InventarioLoteController {
   })
   async findOne(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioLoteDto> {
+    await this.pertenencia.lotes([id], empresaDe(user));
     const lote = await this.inventarioLoteService.findOne(id);
     return plainToClass(ResponseInventarioLoteDto, lote);
   }
@@ -135,9 +167,11 @@ export class InventarioLoteController {
   })
   async findByInventario(
     @Param('idInventario', ParseIntPipe) idInventario: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioLoteDto[]> {
-    const lotes =
-      await this.inventarioLoteService.findByInventario(idInventario);
+    const lotes = await this.pertenencia
+      .inventarios([idInventario], empresaDe(user))
+      .then(() => this.inventarioLoteService.findByInventario(idInventario));
     return lotes.map((lote) => plainToClass(ResponseInventarioLoteDto, lote));
   }
 
@@ -161,10 +195,13 @@ export class InventarioLoteController {
     type: [ResponseInventarioLoteDto],
   })
   async findActiveLotes(
+    @CurrentUser() user: AuthenticatedUser,
     @Query('idInventario') idInventario?: number,
   ): Promise<ResponseInventarioLoteDto[]> {
-    const lotes =
-      await this.inventarioLoteService.findActiveLotes(idInventario);
+    const lotes = await this.soloDeEmpresa(
+      await this.inventarioLoteService.findActiveLotes(idInventario),
+      user,
+    );
     return lotes.map((lote) => plainToClass(ResponseInventarioLoteDto, lote));
   }
 
@@ -195,12 +232,16 @@ export class InventarioLoteController {
     type: [ResponseInventarioLoteDto],
   })
   async findLotesProximosVencer(
+    @CurrentUser() user: AuthenticatedUser,
     @Query('dias') dias?: number,
     @Query('idInventario') idInventario?: number,
   ): Promise<ResponseInventarioLoteDto[]> {
-    const lotes = await this.inventarioLoteService.findLotesProximosVencer(
-      dias,
-      idInventario,
+    const lotes = await this.soloDeEmpresa(
+      await this.inventarioLoteService.findLotesProximosVencer(
+        dias,
+        idInventario,
+      ),
+      user,
     );
     return lotes.map((lote) => plainToClass(ResponseInventarioLoteDto, lote));
   }
@@ -225,10 +266,13 @@ export class InventarioLoteController {
     type: [ResponseInventarioLoteDto],
   })
   async findLotesVencidos(
+    @CurrentUser() user: AuthenticatedUser,
     @Query('idInventario') idInventario?: number,
   ): Promise<ResponseInventarioLoteDto[]> {
-    const lotes =
-      await this.inventarioLoteService.findLotesVencidos(idInventario);
+    const lotes = await this.soloDeEmpresa(
+      await this.inventarioLoteService.findLotesVencidos(idInventario),
+      user,
+    );
     return lotes.map((lote) => plainToClass(ResponseInventarioLoteDto, lote));
   }
 
@@ -252,8 +296,12 @@ export class InventarioLoteController {
   })
   async findByNumeroLote(
     @Param('numeroLote') numeroLote: string,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioLoteDto[]> {
-    const lotes = await this.inventarioLoteService.findByNumeroLote(numeroLote);
+    const lotes = await this.soloDeEmpresa(
+      await this.inventarioLoteService.findByNumeroLote(numeroLote),
+      user,
+    );
     return lotes.map((lote) => plainToClass(ResponseInventarioLoteDto, lote));
   }
 
@@ -284,7 +332,9 @@ export class InventarioLoteController {
   })
   async getCostoPromedioPonderado(
     @Param('idInventario', ParseIntPipe) idInventario: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<any> {
+    await this.pertenencia.inventarios([idInventario], empresaDe(user));
     const costoPromedio =
       await this.inventarioLoteService.getCostoPromedioPonderado(idInventario);
     return {
@@ -319,7 +369,9 @@ export class InventarioLoteController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateInventarioLoteDto: UpdateInventarioLoteDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioLoteDto> {
+    await this.pertenencia.lotes([id], empresaDe(user));
     const lote = await this.inventarioLoteService.update(
       id,
       updateInventarioLoteDto,
@@ -385,7 +437,9 @@ export class InventarioLoteController {
   async consumirStock(
     @Param('idInventario', ParseIntPipe) idInventario: number,
     @Body('cantidad') cantidad: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<any> {
+    await this.pertenencia.inventarios([idInventario], empresaDe(user));
     return await this.inventarioLoteService.consumirStock(
       idInventario,
       cantidad,
@@ -412,7 +466,9 @@ export class InventarioLoteController {
   })
   async remove(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ message: string }> {
+    await this.pertenencia.lotes([id], empresaDe(user));
     return await this.inventarioLoteService.remove(id);
   }
 }

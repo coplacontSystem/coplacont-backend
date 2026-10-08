@@ -48,13 +48,6 @@ export class ResponseUserDto {
   esPrincipal?: boolean;
 
   @Expose()
-  @ApiProperty({
-    description: 'Token de recuperación de contraseña',
-    required: false,
-  })
-  resetPasswordToken?: string;
-
-  @Expose()
   @Type(() => PersonaResponseDto)
   @ApiProperty({
     description: 'Datos de la empresa asociada',

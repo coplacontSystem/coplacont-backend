@@ -1,3 +1,4 @@
+import { UserModule } from '../users/user.module';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
@@ -10,7 +11,7 @@ import { TipoCambioCronService } from './service/tipo-cambio-cron.service';
  * Módulo para gestionar tipos de cambio de SUNAT
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([TipoCambio]), ConfigModule],
+  imports: [TypeOrmModule.forFeature([TipoCambio]), ConfigModule, UserModule],
   controllers: [TipoCambioController],
   providers: [TipoCambioService, TipoCambioCronService],
   exports: [TipoCambioService], // Exportar el servicio para uso en otros módulos

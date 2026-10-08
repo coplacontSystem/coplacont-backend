@@ -6,6 +6,7 @@ import {
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from 'typeorm';
 import { Inventario } from '../../inventario/entities/inventario.entity';
 
@@ -14,6 +15,8 @@ import { Inventario } from '../../inventario/entities/inventario.entity';
  * Representa un lote específico de productos en inventario
  * Necesario para el cálculo de costos en el Kardex (FIFO/PROMEDIO)
  */
+// Índices para las consultas de stock, kardex y reportes
+@Index('IDX_lote_inventario_fecha', ['inventario', 'fechaIngreso'])
 @Entity('inventario_lote')
 export class InventarioLote {
   /**
@@ -62,6 +65,19 @@ export class InventarioLote {
     comment: 'Costo por unidad en este lote',
   })
   costoUnitario: number;
+
+  /**
+   * Cantidad que queda en el lote según el kardex materializado (la escribe
+   * `KardexMaterializadoService`; null hasta que el inventario se materializa).
+   */
+  @Column({
+    name: 'cantidad_disponible',
+    type: 'decimal',
+    precision: 18,
+    scale: 4,
+    nullable: true,
+  })
+  cantidadDisponible?: number | null;
 
   /**
    * Número de lote o referencia (opcional)

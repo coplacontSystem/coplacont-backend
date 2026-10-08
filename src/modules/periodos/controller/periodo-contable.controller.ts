@@ -31,6 +31,8 @@ import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
 import { CurrentUser } from '../../users/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../users/decorators/current-user.decorator';
 import { MetodoValoracion } from '../../comprobantes/enum/metodo-valoracion.enum';
+import { UpdateConfiguracionDto } from '../dto/update-configuracion.dto';
+import { empresaDe } from 'src/common/empresa';
 
 /**
  * Controlador para gestionar períodos contables
@@ -154,19 +156,33 @@ export class PeriodoContableController {
     },
   })
   async obtenerConfiguracion(@CurrentUser() user: AuthenticatedUser) {
-    if (!user.personaId) {
-      throw new Error('Usuario no tiene empresa asociada');
-    }
-    const config = await this.periodoContableService.obtenerConfiguracion(
-      user.personaId,
+    return this.periodoContableService.configuracionCompleta(empresaDe(user));
+  }
+
+  /**
+   * Actualizar las reglas del período (todo salvo el método de valoración)
+   */
+  @Put('configuracion')
+  @ApiOperation({ summary: 'Actualizar las reglas del período de la empresa' })
+  async actualizarConfiguracion(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateConfiguracionDto,
+  ) {
+    return this.periodoContableService.actualizarConfiguracion(
+      empresaDe(user),
+      dto,
     );
-    return {
-      metodoValoracion: (config as any).metodoCalculoCosto,
-      duracionMeses: (config as any).duracionMeses,
-      mesInicio: (config as any).mesInicio,
-      diasLimiteRetroactivo: (config as any).diasLimiteRetroactivo,
-      recalculoAutomaticoKardex: (config as any).recalculoAutomaticoKardex,
-    };
+  }
+
+  /**
+   * Períodos con su estado y acciones disponibles
+   */
+  @Get('resumen')
+  @ApiOperation({
+    summary: 'Períodos de la empresa con estado, movimientos y acciones',
+  })
+  async resumen(@CurrentUser() user: AuthenticatedUser) {
+    return this.periodoContableService.resumenPorPersona(empresaDe(user));
   }
 
   /**
@@ -279,6 +295,8 @@ export class PeriodoContableController {
     if (!user.personaId) {
       throw new Error('Usuario no tiene empresa asociada');
     }
+    // Quien cierra es siempre el usuario autenticado
+    cerrarDto.usuarioCierre = user.email;
     return this.periodoContableService.cerrarPorPersona(
       id,
       user.personaId,

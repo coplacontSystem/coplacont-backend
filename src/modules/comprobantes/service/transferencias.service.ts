@@ -1,6 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { listar, Pagina, PaginacionDto } from 'src/common/paginacion';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { runInTransaction } from 'typeorm-transactional';
+import { TipoMovimiento } from 'src/modules/movimientos/enum/tipo-movimiento.enum';
+import {
+  bloquearInventarios,
+  fechaContable,
+  ymd,
+  ymdContable,
+} from './reglas-registro';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository, In } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { plainToInstance } from 'class-transformer';
 import { CreateTransferenciaDto } from '../dto/transferencia/create-transferencia.dto';
 import { ResponseTransferenciaDto } from '../dto/transferencia/response-transferencia.dto';
@@ -17,6 +26,13 @@ import { MovimientoFactory } from 'src/modules/movimientos/factory/MovimientoFac
 import { Inventario } from 'src/modules/inventario/entities';
 import { Almacen } from 'src/modules/almacen/entities/almacen.entity';
 import { Producto } from 'src/modules/productos/entities/producto.entity';
+import { PertenenciaService } from 'src/common/pertenencia.service';
+import { KardexMaterializadoService } from 'src/modules/inventario/valoracion/kardex-materializado.service';
+import {
+  CatalogoService,
+  COMPROBANTE,
+  OPERACION,
+} from 'src/common/catalogo.service';
 import { CreateComprobanteDetalleDto } from '../dto/comprobante-detalle/create-comprobante-detalle.dto';
 
 @Injectable()
@@ -35,30 +51,40 @@ export class TransferenciasService {
     private readonly movimientoService: MovimientosService,
     private readonly movimientoFactory: MovimientoFactory,
     private readonly dataSource: DataSource,
+    private readonly pertenencia: PertenenciaService,
+    private readonly catalogo: CatalogoService,
+    private readonly kardex: KardexMaterializadoService,
   ) {}
 
   async registerTransfer(
     dto: CreateTransferenciaDto,
     personaId: number,
   ): Promise<ResponseTransferenciaDto> {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
+    // Almacenes y productos deben pertenecer a la empresa del usuario
+    await this.pertenencia.almacenes(
+      [dto.idAlmacenOrigen, dto.idAlmacenDestino],
+      personaId,
+    );
+    await this.pertenencia.productos(
+      (dto.detalles ?? []).map((d) => d.idProducto),
+      personaId,
+    );
 
-    try {
+    // Todo en una transacción: salida del origen y entrada al destino o nada
+    return runInTransaction(async () => {
       const periodoActivoDto =
         await this.periodoContableService.obtenerPeriodoActivo(personaId);
       const periodoActual = await this.periodoContableService.obtenerPorId(
         periodoActivoDto.id,
       );
 
-      const fechaEmision = new Date(dto.fechaEmision);
+      const fechaEmision = fechaContable(dto.fechaEmision);
       if (
-        fechaEmision < new Date(periodoActual.fechaInicio) ||
-        fechaEmision > new Date(periodoActual.fechaFin)
+        ymdContable(fechaEmision) < ymd(periodoActual.fechaInicio) ||
+        ymdContable(fechaEmision) > ymd(periodoActual.fechaFin)
       ) {
-        throw new Error(
-          'Fecha de emision del comprobante no esta dentro del periodo contable de la persona',
+        throw new BadRequestException(
+          'La fecha de emisión está fuera del período contable vigente',
         );
       }
 
@@ -67,20 +93,30 @@ export class TransferenciasService {
         throw new Error(`Persona con ID ${personaId} no encontrada`);
       }
 
-      const metodoValoracion = (
-        await this.periodoContableService.obtenerConfiguracion(personaId)
-      ).metodoCalculoCosto;
-
       const tipoOperacionEntrada = await this.tablaDetalleRepository.findOne({
-        where: { idTablaDetalle: 30 },
+        where: {
+          idTablaDetalle: await this.catalogo.operacion(
+            OPERACION.TRANSFERENCIA_INGRESO,
+          ),
+        },
       });
 
       const tipoOperacionSalida = await this.tablaDetalleRepository.findOne({
-        where: { idTablaDetalle: 31 },
+        where: {
+          idTablaDetalle: await this.catalogo.operacion(
+            OPERACION.TRANSFERENCIA_SALIDA,
+          ),
+        },
       });
 
       const tipoComprobanteEspecial = await this.tablaDetalleRepository.findOne(
-        { where: { idTablaDetalle: 12 } },
+        {
+          where: {
+            idTablaDetalle: await this.catalogo.comprobante(
+              COMPROBANTE.DOCUMENTO_INTERNO,
+            ),
+          },
+        },
       );
 
       if (
@@ -93,7 +129,8 @@ export class TransferenciasService {
         );
       }
 
-      const manager = queryRunner.manager;
+      // Dentro de runInTransaction este manager usa la transacción
+      const manager = this.dataSource.manager;
 
       const inventariosOrigen = await this.mapInventarios(
         manager,
@@ -106,6 +143,13 @@ export class TransferenciasService {
         dto.detalles,
       );
 
+      // Serializa con otros registros sobre los mismos inventarios. El stock
+      // del origen (en la fecha y después) lo valida el motor al costear la salida.
+      await bloquearInventarios(manager, [
+        ...inventariosOrigen.map((i) => i.id),
+        ...inventariosDestino.map((i) => i.id),
+      ]);
+
       const correlativoSalida = await this.findOrCreateCorrelativo(
         manager,
         tipoOperacionSalida.idTablaDetalle,
@@ -114,17 +158,7 @@ export class TransferenciasService {
       correlativoSalida.ultimoNumero += 1;
       await manager.save(correlativoSalida);
 
-      const fechaSalidaParsed = new Date(dto.fechaEmision);
-      const ahoraSalida = new Date();
-      const fechaEmisionSalida = new Date(
-        fechaSalidaParsed.getUTCFullYear(),
-        fechaSalidaParsed.getUTCMonth(),
-        fechaSalidaParsed.getUTCDate(),
-        ahoraSalida.getHours(),
-        ahoraSalida.getMinutes(),
-        ahoraSalida.getSeconds(),
-        ahoraSalida.getMilliseconds(),
-      );
+      const fechaEmisionSalida = fechaEmision;
       const comprobanteSalida = manager.create(Comprobante, {
         fechaEmision: fechaEmisionSalida,
         moneda: dto.moneda,
@@ -174,8 +208,7 @@ export class TransferenciasService {
       const procesadoSalida =
         await this.loteCreationService.procesarLotesComprobante(
           detallesSalidaSaved,
-          tipoOperacionSalida.descripcion,
-          metodoValoracion,
+          'SALIDA',
           fechaEmision,
         );
 
@@ -199,6 +232,7 @@ export class TransferenciasService {
           comprobanteSalidaConRel,
           procesadoSalida.costoUnitario,
           procesadoSalida.lotes,
+          TipoMovimiento.SALIDA,
         );
       await this.movimientoService.createWithManager(
         movimientoSalidaDto,
@@ -213,17 +247,7 @@ export class TransferenciasService {
       correlativoEntrada.ultimoNumero += 1;
       await manager.save(correlativoEntrada);
 
-      const fechaEntradaParsed = new Date(dto.fechaEmision);
-      const ahoraEntrada = new Date();
-      const fechaEmisionEntrada = new Date(
-        fechaEntradaParsed.getUTCFullYear(),
-        fechaEntradaParsed.getUTCMonth(),
-        fechaEntradaParsed.getUTCDate(),
-        ahoraEntrada.getHours(),
-        ahoraEntrada.getMinutes(),
-        ahoraEntrada.getSeconds(),
-        ahoraEntrada.getMilliseconds(),
-      );
+      const fechaEmisionEntrada = fechaEmision;
       const comprobanteEntrada = manager.create(Comprobante, {
         fechaEmision: fechaEmisionEntrada,
         moneda: dto.moneda,
@@ -277,8 +301,7 @@ export class TransferenciasService {
       const procesadoEntrada =
         await this.loteCreationService.procesarLotesComprobante(
           detallesEntradaSaved,
-          'COMPRA',
-          metodoValoracion,
+          'ENTRADA',
           fechaEmision,
         );
 
@@ -302,13 +325,19 @@ export class TransferenciasService {
           comprobanteEntradaConRel,
           procesadoEntrada.costoUnitario,
           procesadoEntrada.lotes,
+          TipoMovimiento.ENTRADA,
         );
       await this.movimientoService.createWithManager(
         movimientoEntradaDto,
         manager,
       );
-
-      await queryRunner.commitTransaction();
+      await this.kardex.recalcularDesde(
+        [
+          ...inventariosOrigen.map((i) => Number(i.id)),
+          ...inventariosDestino.map((i) => Number(i.id)),
+        ],
+        ymdContable(fechaEmision),
+      );
 
       const salidaWithRelations = await this.comprobanteRepository.findOne({
         where: { idComprobante: comprobanteSalidaSaved.idComprobante },
@@ -359,12 +388,7 @@ export class TransferenciasService {
       );
 
       return response;
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      throw error;
-    } finally {
-      await queryRunner.release();
-    }
+    });
   }
 
   private async findOrCreateCorrelativo(
@@ -434,26 +458,39 @@ export class TransferenciasService {
     return result;
   }
 
-  async findAll(personaId: number): Promise<ResponseComprobanteDto[]> {
-    const comprobantes = await this.comprobanteRepository.find({
-      where: {
-        persona: { id: personaId },
-        tipoOperacion: { idTablaDetalle: In([29, 30]) },
+  async findAll(
+    personaId: number,
+    paginacion?: PaginacionDto,
+  ): Promise<ResponseComprobanteDto[] | Pagina<ResponseComprobanteDto>> {
+    return listar(
+      this.comprobanteRepository,
+      {
+        where: {
+          persona: { id: personaId },
+          // Una fila por transferencia: el comprobante de ingreso al almacén destino
+          tipoOperacion: {
+            idTablaDetalle: await this.catalogo.operacion(
+              OPERACION.TRANSFERENCIA_INGRESO,
+            ),
+          },
+        },
+        relations: [
+          'totales',
+          'persona',
+          'entidad',
+          'tipoOperacion',
+          'tipoComprobante',
+          'detalles',
+          'detalles.inventario',
+          'detalles.inventario.producto',
+        ],
+        order: { fechaRegistro: 'DESC', idComprobante: 'DESC' },
       },
-      relations: [
-        'totales',
-        'persona',
-        'entidad',
-        'tipoOperacion',
-        'tipoComprobante',
-        'detalles',
-        'detalles.inventario',
-        'detalles.inventario.producto',
-      ],
-      order: { fechaRegistro: 'DESC' },
-    });
-    return plainToInstance(ResponseComprobanteDto, comprobantes, {
-      excludeExtraneousValues: true,
-    });
+      paginacion,
+      (filas) =>
+        plainToInstance(ResponseComprobanteDto, filas, {
+          excludeExtraneousValues: true,
+        }),
+    );
   }
 }

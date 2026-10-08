@@ -1,3 +1,7 @@
+import { ValoracionService } from './valoracion/valoracion.service';
+import { KardexMaterializadoService } from './valoracion/kardex-materializado.service';
+import { KardexLinea } from './entities/kardex-linea.entity';
+import { InventarioSaldo } from './entities/inventario-saldo.entity';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Inventario } from './entities/inventario.entity';
@@ -14,12 +18,10 @@ import { InventarioLoteService } from './service/inventario-lote.service';
 import { LoteService } from './service/lote.service';
 import { LoteCreationService } from './service/lote-creation.service';
 import { StockCalculationService } from './service/stock-calculation.service';
-import { StockCacheService } from './service/stock-cache.service';
 import { KardexCalculationService } from './service/kardex-calculation.service';
 import { KardexService } from './service/kardex.service';
 import { CostoVentaService } from './service/costo-venta.service';
 import { InventarioRepository } from './repository';
-import { KardexRepository } from './repository/kardex.repository';
 import { CostoVentaRepository } from './repository/costo-venta.repository';
 import { InventarioController } from './controller/inventario.controller';
 import { InventarioLoteController } from './controller/inventario-lote.controller';
@@ -29,6 +31,9 @@ import { CostoVentaController } from './controller/costo-venta.controller';
 import { ProductosModule } from '../productos/productos.module';
 import { UserModule } from '../users/user.module';
 import { PeriodosModule } from '../periodos/periodos.module';
+import { ReportesModule } from '../reportes/reportes.module';
+import { CostoVentaReportes } from './reportes/costo-venta.reportes';
+import { KardexReportes } from './reportes/kardex.reportes';
 
 @Module({
   imports: [
@@ -41,10 +46,13 @@ import { PeriodosModule } from '../periodos/periodos.module';
       MovimientoDetalle,
       ComprobanteDetalle,
       TablaDetalle,
+      KardexLinea,
+      InventarioSaldo,
     ]),
     ProductosModule,
     UserModule,
     PeriodosModule,
+    ReportesModule,
   ],
   controllers: [
     InventarioController,
@@ -59,13 +67,15 @@ import { PeriodosModule } from '../periodos/periodos.module';
     LoteService,
     LoteCreationService,
     StockCalculationService,
-    StockCacheService,
     KardexCalculationService,
     KardexService,
     CostoVentaService,
     InventarioRepository,
-    KardexRepository,
     CostoVentaRepository,
+    ValoracionService,
+    KardexMaterializadoService,
+    CostoVentaReportes,
+    KardexReportes,
   ],
   exports: [
     InventarioService,
@@ -73,10 +83,11 @@ import { PeriodosModule } from '../periodos/periodos.module';
     LoteService,
     LoteCreationService,
     StockCalculationService,
-    StockCacheService,
     KardexCalculationService,
     KardexService,
     CostoVentaService,
+    ValoracionService,
+    KardexMaterializadoService,
     TypeOrmModule,
   ],
 })

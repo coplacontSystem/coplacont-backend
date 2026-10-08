@@ -12,7 +12,6 @@ import { Almacen } from 'src/modules/almacen/entities/almacen.entity';
 import { Inventario, InventarioLote } from 'src/modules/inventario/entities';
 import { Comprobante } from 'src/modules/comprobantes/entities/comprobante';
 import { StockCalculationService } from 'src/modules/inventario/service/stock-calculation.service';
-import { StockCacheService } from 'src/modules/inventario/service/stock-cache.service';
 
 /**
  * Repositorio para encapsular la lógica de acceso a datos de movimientos
@@ -36,7 +35,6 @@ export class MovimientosRepository {
     private readonly inventarioLoteRepository: Repository<InventarioLote>,
     private readonly dataSource: DataSource,
     private readonly stockCalculationService: StockCalculationService,
-    private readonly stockCacheService: StockCacheService,
   ) {}
 
   /**
@@ -362,9 +360,6 @@ export class MovimientosRepository {
       fechaIngreso: new Date(),
     });
     await manager.save(InventarioLote, lote);
-
-    // Invalidar caché para recálculo dinámico
-    this.stockCacheService.invalidateInventario(inventario.id);
   }
 
   /**
@@ -403,12 +398,6 @@ export class MovimientosRepository {
         );
       }
     }
-
-    // Invalidar caché para recálculo dinámico
-    this.stockCacheService.invalidateInventario(inventario.id);
-    if (detalle.idLote) {
-      this.stockCacheService.invalidateLote(detalle.idLote);
-    }
   }
 
   /**
@@ -428,9 +417,6 @@ export class MovimientosRepository {
       fechaIngreso: new Date(),
     });
     await manager.save(InventarioLote, lote);
-
-    // Invalidar caché para recálculo dinámico
-    this.stockCacheService.invalidateInventario(inventario.id);
   }
 
   /**

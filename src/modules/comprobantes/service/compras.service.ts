@@ -1,9 +1,11 @@
+import { listar, Pagina, PaginacionDto } from 'src/common/paginacion';
 import { Injectable } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { plainToInstance } from 'class-transformer';
 import { Comprobante } from '../entities/comprobante';
 import { TablaDetalle } from '../entities/tabla-detalle.entity';
+import { CatalogoService, OPERACION } from 'src/common/catalogo.service';
 import { ResponseComprobanteDto } from '../dto/comprobante/response-comprobante.dto';
 
 @Injectable()
@@ -13,6 +15,7 @@ export class ComprasService {
     private readonly comprobanteRepository: Repository<Comprobante>,
     @InjectRepository(TablaDetalle)
     private readonly tablaDetalleRepository: Repository<TablaDetalle>,
+    private readonly catalogo: CatalogoService,
   ) {}
 
   /**
@@ -20,27 +23,37 @@ export class ComprasService {
    * @param personaId ID de la empresa (Persona)
    * @returns Promise<ResponseComprobanteDto[]> Lista de comprobantes de compra
    */
-  async findAll(personaId: number): Promise<ResponseComprobanteDto[]> {
+  async findAll(
+    personaId: number,
+    paginacion?: PaginacionDto,
+  ): Promise<ResponseComprobanteDto[] | Pagina<ResponseComprobanteDto>> {
     // Usar directamente el idTablaDetalle para COMPRA (13) de la Tabla 12
-    const comprobantes = await this.comprobanteRepository.find({
-      where: {
-        tipoOperacion: { idTablaDetalle: 14 }, // ID 13 para COMPRA en Tabla 12
-        persona: { id: personaId },
+    return listar(
+      this.comprobanteRepository,
+      {
+        where: {
+          tipoOperacion: {
+            idTablaDetalle: await this.catalogo.operacion(OPERACION.COMPRA),
+          },
+          persona: { id: personaId },
+        },
+        relations: [
+          'totales',
+          'persona',
+          'detalles',
+          'detalles.inventario',
+          'entidad',
+          'tipoOperacion',
+          'tipoComprobante',
+        ],
+        order: { fechaRegistro: 'DESC', idComprobante: 'DESC' },
       },
-      relations: [
-        'totales',
-        'persona',
-        'detalles',
-        'detalles.inventario',
-        'entidad',
-        'tipoOperacion',
-        'tipoComprobante',
-      ],
-      order: { fechaRegistro: 'DESC' },
-    });
-    return plainToInstance(ResponseComprobanteDto, comprobantes, {
-      excludeExtraneousValues: true,
-    });
+      paginacion,
+      (filas) =>
+        plainToInstance(ResponseComprobanteDto, filas, {
+          excludeExtraneousValues: true,
+        }),
+    );
   }
 
   /**

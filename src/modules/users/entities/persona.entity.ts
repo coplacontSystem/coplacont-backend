@@ -21,6 +21,10 @@ export class Persona {
   @Column({ nullable: true })
   direccion: string;
 
+  /** Logo de la empresa como data URL; no se carga salvo que se pida */
+  @Column({ type: 'text', nullable: true, select: false })
+  logo?: string | null;
+
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   createdAt: Date;
 

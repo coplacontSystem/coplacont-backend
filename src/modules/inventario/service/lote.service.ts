@@ -15,8 +15,9 @@ export class LoteService {
   /**
    * Obtener lotes recientes (últimos 10)
    */
-  async findLotesRecientes(): Promise<InventarioLote[]> {
+  async findLotesRecientes(personaId: number): Promise<InventarioLote[]> {
     return this.loteRepository.find({
+      where: { inventario: { almacen: { persona: { id: personaId } } } },
       relations: ['inventario', 'inventario.producto', 'inventario.almacen'],
       order: { fechaIngreso: 'DESC' },
       take: 10,

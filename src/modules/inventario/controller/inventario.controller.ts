@@ -30,6 +30,8 @@ import {
 import { ResponseProductoDto } from 'src/modules/productos/dto/response-producto.dto';
 import { plainToClass } from 'class-transformer';
 import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
+import { PertenenciaService } from '../../../common/pertenencia.service';
+import { empresaDe } from '../../../common/empresa';
 import { CurrentUser } from '../../users/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../users/decorators/current-user.decorator';
 
@@ -39,7 +41,10 @@ import type { AuthenticatedUser } from '../../users/decorators/current-user.deco
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class InventarioController {
-  constructor(private readonly inventarioService: InventarioService) { }
+  constructor(
+    private readonly inventarioService: InventarioService,
+    private readonly pertenencia: PertenenciaService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -69,13 +74,17 @@ export class InventarioController {
     @Body() createInventarioDto: CreateInventarioDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioDto> {
-    if (!user.personaId) {
-      throw new Error('Usuario no tiene una empresa asociada');
-    }
-    const inventario = await this.inventarioService.create(
-      createInventarioDto,
-      user.personaId,
+    const personaId = empresaDe(user);
+    await this.pertenencia.almacenes(
+      [createInventarioDto.idAlmacen],
+      personaId,
     );
+    await this.pertenencia.productos(
+      [createInventarioDto.idProducto],
+      personaId,
+    );
+    // La pertenencia de almacén y producto ya se verificó arriba
+    const inventario = await this.inventarioService.create(createInventarioDto);
     return plainToClass(ResponseInventarioDto, inventario);
   }
 
@@ -121,7 +130,9 @@ export class InventarioController {
   })
   async findOne(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioDto> {
+    await this.pertenencia.inventarios([id], empresaDe(user));
     const inventario = await this.inventarioService.findOne(id);
     return plainToClass(ResponseInventarioDto, inventario);
   }
@@ -254,7 +265,9 @@ export class InventarioController {
   async findByAlmacenAndProducto(
     @Param('idAlmacen', ParseIntPipe) idAlmacen: number,
     @Param('idProducto', ParseIntPipe) idProducto: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioDto> {
+    await this.pertenencia.almacenes([idAlmacen], empresaDe(user));
     const inventario = await this.inventarioService.findByAlmacenAndProducto(
       idAlmacen,
       idProducto,
@@ -275,7 +288,9 @@ export class InventarioController {
   })
   async getInventarioInicial(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<any> {
+    await this.pertenencia.inventarios([id], empresaDe(user));
     return await this.inventarioService.getInventarioInicial(id);
   }
 
@@ -311,7 +326,9 @@ export class InventarioController {
     @Param('id', ParseIntPipe) id: number,
     @Body()
     body: { cantidadInicial?: number; costoUnitario?: number },
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<any> {
+    await this.pertenencia.inventarios([id], empresaDe(user));
     return await this.inventarioService.updateInventarioInicial(id, body);
   }
 
@@ -333,9 +350,15 @@ export class InventarioController {
     type: [ResponseInventarioDto],
   })
   async findLowStock(
+    @CurrentUser() user: AuthenticatedUser,
     @Query('idAlmacen') idAlmacen?: number,
   ): Promise<ResponseInventarioDto[]> {
-    const inventarios = await this.inventarioService.findLowStock(idAlmacen);
+    const propios = await this.pertenencia.inventariosDeEmpresa(
+      empresaDe(user),
+    );
+    const inventarios = (
+      await this.inventarioService.findLowStock(idAlmacen)
+    ).filter((inv) => propios.has(Number(inv.id)));
     return inventarios.map((inventario) =>
       plainToClass(ResponseInventarioDto, inventario),
     );
@@ -361,7 +384,9 @@ export class InventarioController {
   })
   async getResumenByAlmacen(
     @Param('idAlmacen', ParseIntPipe) idAlmacen: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<any> {
+    await this.pertenencia.almacenes([idAlmacen], empresaDe(user));
     return await this.inventarioService.getResumenByAlmacen(idAlmacen);
   }
 
@@ -392,7 +417,22 @@ export class InventarioController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateInventarioDto: UpdateInventarioDto,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioDto> {
+    const personaId = empresaDe(user);
+    await this.pertenencia.inventarios([id], personaId);
+    if (updateInventarioDto.idAlmacen) {
+      await this.pertenencia.almacenes(
+        [updateInventarioDto.idAlmacen],
+        personaId,
+      );
+    }
+    if (updateInventarioDto.idProducto) {
+      await this.pertenencia.productos(
+        [updateInventarioDto.idProducto],
+        personaId,
+      );
+    }
     const inventario = await this.inventarioService.update(
       id,
       updateInventarioDto,
@@ -436,7 +476,9 @@ export class InventarioController {
   async updateStock(
     @Param('id', ParseIntPipe) id: number,
     @Body('cantidad') cantidad: number,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ResponseInventarioDto> {
+    await this.pertenencia.inventarios([id], empresaDe(user));
     const inventario = await this.inventarioService.updateStock(id, cantidad);
     return plainToClass(ResponseInventarioDto, inventario);
   }

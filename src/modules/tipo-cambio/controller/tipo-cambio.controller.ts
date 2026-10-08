@@ -1,4 +1,5 @@
-import { Controller, Get, Query, Logger } from '@nestjs/common';
+import { Controller, Get, Query, Logger, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../../users/guards/jwt-auth.guard';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { TipoCambioService } from '../service/tipo-cambio.service';
 import {
@@ -8,6 +9,7 @@ import {
 import { ApiResponseDto } from '../../entidades/dto/api-response.dto';
 
 @ApiTags('Tipo de Cambio')
+@UseGuards(JwtAuthGuard)
 @Controller('/api/tipo-cambio')
 export class TipoCambioController {
   private readonly logger = new Logger(TipoCambioController.name);
