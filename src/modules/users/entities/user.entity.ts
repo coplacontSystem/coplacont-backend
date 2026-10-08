@@ -1,5 +1,6 @@
 import {
   Column,
+  CreateDateColumn,
   Entity,
   JoinColumn,
   ManyToOne,
@@ -60,6 +61,9 @@ export class User {
     nullable: true,
   })
   ultimoAgente: string | null;
+
+  @CreateDateColumn({ name: 'fecha_creacion', type: 'timestamptz' })
+  fechaCreacion: Date;
 
   @Column({
     name: 'contrasena_actualizada',
