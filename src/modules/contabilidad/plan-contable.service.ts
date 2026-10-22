@@ -58,6 +58,18 @@ export class PlanContableService {
     return this.dataSource.query(sql, params);
   }
 
+  /** La cuenta (o alguna de sus subcuentas) tiene líneas en asientos registrados */
+  private async tieneMovimientos(idCuenta: number, personaId: number) {
+    const [f] = await this.query(
+      `SELECT 1 FROM asiento_linea l
+         JOIN asiento_contable a ON a.id = l.id_asiento
+        WHERE l.id_cuenta = $1 AND a.id_persona = $2 AND a.estado = 'registrado'
+        LIMIT 1`,
+      [idCuenta, personaId],
+    );
+    return Boolean(f);
+  }
+
   async planes(): Promise<PlanVista[]> {
     const filas = await this.query(
       `SELECT id, codigo, nombre, norma, codigo_sunat,
@@ -190,6 +202,12 @@ export class PlanContableService {
           `La cuenta ${padre.codigo} está desactivada`,
         );
       }
+      // Una cuenta con movimientos no puede pasar a agrupar subcuentas
+      if (await this.tieneMovimientos(padre.id, personaId)) {
+        throw new BadRequestException(
+          `La cuenta ${padre.codigo} ya tiene movimientos: no se le pueden abrir subcuentas`,
+        );
+      }
       const extra = codigo.length - padre.codigo.length;
       if (!codigo.startsWith(padre.codigo) || extra < 1 || extra > 2) {
         throw new BadRequestException(
@@ -253,7 +271,11 @@ export class PlanContableService {
       if (hija) {
         throw new BadRequestException('Primero desactiva sus subcuentas');
       }
-      // Cuando existan asientos: no desactivar una cuenta con movimientos
+      if (await this.tieneMovimientos(id, personaId)) {
+        throw new BadRequestException(
+          'La subcuenta tiene movimientos registrados: no se puede desactivar',
+        );
+      }
     }
     await this.query(
       `UPDATE cuenta_contable
@@ -275,6 +297,15 @@ export class PlanContableService {
       `SELECT COUNT(*) AS n FROM cuenta_contable WHERE id_plan = $1 AND id_persona = $2`,
       [actual.id, personaId],
     );
+    const [asiento] = await this.query(
+      `SELECT 1 FROM asiento_contable WHERE id_persona = $1 LIMIT 1`,
+      [personaId],
+    );
+    if (asiento) {
+      throw new BadRequestException(
+        'La empresa ya tiene asientos registrados con el plan actual: no se puede cambiar de plan',
+      );
+    }
     if (Number(propias.n) > 0) {
       throw new BadRequestException(
         `La empresa tiene ${propias.n} subcuentas propias en ${actual.nombre}. ` +
