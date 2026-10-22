@@ -287,6 +287,39 @@ export class PlanContableService {
     return (await this.cuenta(personaId, c.codigo)).cuenta;
   }
 
+  /**
+   * Cuentas de movimiento de la empresa por código (para registrar líneas de
+   * gasto o ingreso). Falla con el detalle de las que no sirven.
+   */
+  async resolverImputables(
+    personaId: number,
+    codigos: string[],
+  ): Promise<Map<string, CuentaVista>> {
+    const unicos = [...new Set(codigos)];
+    if (!unicos.length) return new Map();
+    const plan = await this.planDe(personaId);
+    const filas = (
+      await this.query(`${SELECT_CUENTA} AND c.codigo = ANY($3)`, [
+        plan.id,
+        personaId,
+        unicos,
+      ])
+    ).map(vista);
+    const por = new Map(filas.map((c) => [c.codigo, c]));
+    const errores = unicos.flatMap((codigo) => {
+      const c = por.get(codigo);
+      if (!c) return [`La cuenta ${codigo} no existe en tu plan`];
+      if (!c.activa) return [`La cuenta ${codigo} está desactivada`];
+      if (!c.imputable)
+        return [
+          `La cuenta ${codigo} agrupa subcuentas; usa una de sus subcuentas`,
+        ];
+      return [];
+    });
+    if (errores.length) throw new BadRequestException(errores);
+    return por;
+  }
+
   /** Cambia el plan de la empresa (p. ej. al PCGE 2026) */
   async cambiarPlan(personaId: number, idPlan: number) {
     const destino = (await this.planes()).find((p) => p.id === idPlan);

@@ -35,6 +35,12 @@ import {
   OPERACION,
 } from 'src/common/catalogo.service';
 import { KardexMaterializadoService } from 'src/modules/inventario/valoracion/kardex-materializado.service';
+import { PlanContableService } from 'src/modules/contabilidad/plan-contable.service';
+import { AreaService } from 'src/modules/contabilidad/areas/area.service';
+import { CreateComprobanteDetalleDto } from '../dto/comprobante-detalle/create-comprobante-detalle.dto';
+
+const esServicio = (d: CreateComprobanteDetalleDto) =>
+  d.tipoLinea === 'servicio';
 
 @Injectable()
 export class ComprobanteService implements OnModuleInit {
@@ -57,6 +63,8 @@ export class ComprobanteService implements OnModuleInit {
     private readonly pertenencia: PertenenciaService,
     private readonly catalogo: CatalogoService,
     private readonly kardex: KardexMaterializadoService,
+    private readonly planContable: PlanContableService,
+    private readonly areas: AreaService,
   ) {}
 
   /**
@@ -126,8 +134,14 @@ export class ComprobanteService implements OnModuleInit {
   ): Promise<ResponseComprobanteDto> {
     // Todo lo referenciado debe pertenecer a la empresa del usuario
     await this.pertenencia.entidades([dto.idPersona], personaId);
+    const cuentasPorCodigo = await this.validarLineas(
+      dto.detalles ?? [],
+      personaId,
+    );
     await this.pertenencia.inventarios(
-      (dto.detalles ?? []).map((d) => d.idInventario),
+      (dto.detalles ?? [])
+        .filter((d) => !esServicio(d))
+        .map((d) => d.idInventario!),
       personaId,
     );
     if (dto.idComprobanteAfecto) {
@@ -143,7 +157,7 @@ export class ComprobanteService implements OnModuleInit {
     }
 
     const idComprobante = await runInTransaction(() =>
-      this.registrarEnTransaccion(dto, personaId),
+      this.registrarEnTransaccion(dto, personaId, cuentasPorCodigo),
     );
 
     const guardado = await this.comprobanteRepository.findOne({
@@ -157,6 +171,8 @@ export class ComprobanteService implements OnModuleInit {
         'detalles',
         'detalles.inventario',
         'detalles.inventario.producto',
+        'detalles.cuentaContable',
+        'detalles.area',
       ],
     });
     return plainToInstance(ResponseComprobanteDto, guardado, {
@@ -168,6 +184,7 @@ export class ComprobanteService implements OnModuleInit {
   private async registrarEnTransaccion(
     dto: CreateComprobanteDto,
     personaId: number,
+    cuentasPorCodigo: Map<string, number>,
   ): Promise<number> {
     // Dentro de runInTransaction este manager (y los repositorios) usan la transacción
     const manager = this.dataSource.manager;
@@ -247,8 +264,10 @@ export class ComprobanteService implements OnModuleInit {
     }
 
     const detalles = this.existDetails(dto) ? dto.detalles! : [];
+    // Solo las líneas de producto mueven inventario y kardex
+    const deProducto = detalles.filter((d) => !esServicio(d));
     const modo =
-      detalles.length > 0
+      deProducto.length > 0
         ? modoInventario(
             tipoOperacion.codigo,
             tipoComprobante.codigo,
@@ -261,7 +280,7 @@ export class ComprobanteService implements OnModuleInit {
       // las salidas (en su fecha y después) lo valida el motor de valoración.
       await bloquearInventarios(
         manager,
-        detalles.map((d) => d.idInventario),
+        deProducto.map((d) => d.idInventario!),
       );
     }
 
@@ -304,8 +323,13 @@ export class ComprobanteService implements OnModuleInit {
       guardado.idComprobante,
       detalles,
       manager,
+      cuentasPorCodigo,
     );
     if (!modo) return guardado.idComprobante;
+    // Mismo orden (por id) en los costos y en el movimiento
+    const guardadosDeProducto = detallesGuardados
+      .filter((d) => d.inventario)
+      .sort((a, b) => a.idDetalle - b.idDetalle);
 
     // Lotes (entrada) o consumo de lotes (salida). El costo se guarda en soles.
     const factorCosto = dto.moneda === Moneda.USD ? Number(dto.tipoCambio) : 1;
@@ -317,12 +341,12 @@ export class ComprobanteService implements OnModuleInit {
     const costosEntrada = esDevolucionDeVenta
       ? await this.kardex.costoDeSalidaDe(
           comprobanteAfecto!.idComprobante,
-          detalles.map((d) => d.idInventario),
+          deProducto.map((d) => d.idInventario!),
         )
       : undefined;
     const { costoUnitario, lotes } =
       await this.loteCreationService.procesarLotesComprobante(
-        detallesGuardados,
+        guardadosDeProducto,
         modo,
         fecha,
         factorCosto,
@@ -339,6 +363,9 @@ export class ComprobanteService implements OnModuleInit {
         'detalles.inventario.producto',
       ],
     });
+    conRelaciones!.detalles = conRelaciones!.detalles
+      .filter((d) => d.inventario)
+      .sort((a, b) => a.idDetalle - b.idDetalle);
     const movimientoDto =
       this.movimientoFactory.createMovimientoFromComprobante(
         conRelaciones!,
@@ -349,11 +376,46 @@ export class ComprobanteService implements OnModuleInit {
     await this.movimientoService.createWithManager(movimientoDto, manager);
     // Kardex materializado: recalcula desde el día del comprobante
     await this.kardex.recalcularDesde(
-      detalles.map((d) => d.idInventario),
+      deProducto.map((d) => d.idInventario!),
       ymdContable(fecha),
     );
 
     return guardado.idComprobante;
+  }
+
+  /**
+   * Líneas de producto: inventario obligatorio. Líneas de servicio: cuenta de
+   * movimiento del plan de la empresa y, opcional, un área activa.
+   * Devuelve el id de cada cuenta usada.
+   */
+  private async validarLineas(
+    detalles: CreateComprobanteDetalleDto[],
+    personaId: number,
+  ): Promise<Map<string, number>> {
+    const errores: string[] = [];
+    detalles.forEach((d, i) => {
+      const linea = `Línea ${i + 1}`;
+      if (esServicio(d)) {
+        if (d.idInventario)
+          errores.push(`${linea}: una línea de servicio no lleva inventario`);
+        if (!d.codigoCuenta)
+          errores.push(`${linea}: indica la cuenta de gasto o ingreso`);
+      } else if (!d.idInventario) {
+        errores.push(`${linea}: indica el producto (inventario)`);
+      }
+    });
+    if (errores.length) throw new BadRequestException(errores);
+
+    const servicios = detalles.filter(esServicio);
+    const cuentas = await this.planContable.resolverImputables(
+      personaId,
+      servicios.map((d) => d.codigoCuenta!),
+    );
+    await this.areas.validarActivas(
+      personaId,
+      detalles.filter((d) => d.idArea).map((d) => d.idArea!),
+    );
+    return new Map([...cuentas].map(([codigo, c]) => [codigo, c.id]));
   }
 
   /**

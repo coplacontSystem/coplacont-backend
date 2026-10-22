@@ -41,6 +41,8 @@ export class ComprasService {
           'totales',
           'persona',
           'detalles',
+          'detalles.cuentaContable',
+          'detalles.area',
           'detalles.inventario',
           'entidad',
           'tipoOperacion',
@@ -87,6 +89,8 @@ export class ComprasService {
         'totales',
         'persona',
         'detalles',
+        'detalles.cuentaContable',
+        'detalles.area',
         'detalles.inventario',
         'entidad',
         'tipoOperacion',
@@ -131,6 +135,8 @@ export class ComprasService {
       .leftJoinAndSelect('comprobante.totales', 'totales')
       .leftJoinAndSelect('comprobante.persona', 'persona')
       .leftJoinAndSelect('comprobante.detalles', 'detalles')
+      .leftJoinAndSelect('detalles.cuentaContable', 'cuentaContable')
+      .leftJoinAndSelect('detalles.area', 'area')
       .leftJoinAndSelect('detalles.inventario', 'inventario')
       .leftJoinAndSelect('comprobante.tipoOperacion', 'tipoOperacion')
       .leftJoinAndSelect('comprobante.tipoComprobante', 'tipoComprobante')
@@ -175,6 +181,8 @@ export class ComprasService {
       .leftJoinAndSelect('comprobante.persona', 'persona')
       .leftJoinAndSelect('comprobante.entidad', 'entidad')
       .leftJoinAndSelect('comprobante.detalles', 'detalles')
+      .leftJoinAndSelect('detalles.cuentaContable', 'cuentaContable')
+      .leftJoinAndSelect('detalles.area', 'area')
       .leftJoinAndSelect('detalles.inventario', 'inventario')
       .leftJoinAndSelect('comprobante.tipoOperacion', 'tipoOperacion')
       .leftJoinAndSelect('comprobante.tipoComprobante', 'tipoComprobante')

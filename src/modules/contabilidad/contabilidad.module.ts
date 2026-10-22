@@ -10,6 +10,9 @@ import { AsientoContable } from './asientos/asiento.entity';
 import { AsientoLinea } from './asientos/asiento-linea.entity';
 import { AsientoController } from './asientos/asiento.controller';
 import { AsientoService } from './asientos/asiento.service';
+import { AreaContable } from './areas/area.entity';
+import { AreaController } from './areas/area.controller';
+import { AreaService } from './areas/area.service';
 
 @Module({
   imports: [
@@ -18,11 +21,17 @@ import { AsientoService } from './asientos/asiento.service';
       CuentaContable,
       AsientoContable,
       AsientoLinea,
+      AreaContable,
     ]),
     UserModule,
   ],
-  controllers: [PlanContableController, AsientoController],
-  providers: [PlanContableService, PlanContableSeed, AsientoService],
-  exports: [PlanContableService, AsientoService],
+  controllers: [PlanContableController, AsientoController, AreaController],
+  providers: [
+    PlanContableService,
+    PlanContableSeed,
+    AsientoService,
+    AreaService,
+  ],
+  exports: [PlanContableService, AsientoService, AreaService],
 })
 export class ContabilidadModule {}

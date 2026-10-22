@@ -23,6 +23,7 @@ export class ComprobanteDetalleService {
     idComprobante: number,
     createComprobanteDetalleDtos: CreateComprobanteDetalleDto[],
     manager?: EntityManager,
+    cuentasPorCodigo: Map<string, number> = new Map(),
   ): Promise<ComprobanteDetalle[]> {
     // Usar el repositorio apropiado según si hay EntityManager
     const comprobanteRepo = manager
@@ -49,8 +50,18 @@ export class ComprobanteDetalleService {
       createComprobanteDetalleDtos.map(async (dto) => {
         const detalle = detalleRepo.create(dto);
         detalle.comprobante = comprobante;
+        detalle.tipoLinea = dto.tipoLinea ?? 'producto';
+        if (dto.idArea)
+          detalle.area = { id: dto.idArea } as ComprobanteDetalle['area'];
 
-        if (dto.idInventario) {
+        if (detalle.tipoLinea === 'servicio') {
+          // Gasto o ingreso sin inventario: cuenta contable ya validada
+          detalle.inventario = null;
+          detalle.cuentaContable = {
+            id: cuentasPorCodigo.get(dto.codigoCuenta!),
+          } as ComprobanteDetalle['cuentaContable'];
+          detalle.descripcion = dto.descripcion || 'Servicio';
+        } else if (dto.idInventario) {
           const inventario = await inventarioRepo.findOne({
             where: { id: dto.idInventario },
             relations: ['producto', 'almacen'],
