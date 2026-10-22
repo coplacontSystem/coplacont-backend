@@ -21,6 +21,10 @@ export class Persona {
   @Column({ nullable: true })
   direccion: string;
 
+  /** Plan contable de la empresa; null = el plan por defecto (PCGE 2019) */
+  @Column({ name: 'id_plan_contable', type: 'int', nullable: true })
+  idPlanContable: number | null;
+
   /** Logo de la empresa como data URL; no se carga salvo que se pida */
   @Column({ type: 'text', nullable: true, select: false })
   logo?: string | null;
