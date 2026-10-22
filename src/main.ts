@@ -29,8 +29,8 @@ async function createApp(): Promise<Express> {
     AppModule,
     new ExpressAdapter(expressApp),
   );
-  // Foto de perfil y logo viajan como data URL dentro del JSON
-  app.useBodyParser('json', { limit: '3mb' });
+  // Foto de perfil, logo y XML importados viajan en base64 dentro del JSON
+  app.useBodyParser('json', { limit: '15mb' });
 
   const dataSource = app.get(DataSource);
   addTransactionalDataSource(dataSource);

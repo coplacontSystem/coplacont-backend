@@ -1,0 +1,26 @@
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ComprobanteModule } from '../comprobantes/comprobante.module';
+import { ProductosModule } from '../productos/productos.module';
+import { InventarioModule } from '../inventario/inventario.module';
+import { PeriodosModule } from '../periodos/periodos.module';
+import { TipoCambioModule } from '../tipo-cambio/tipo-cambio.module';
+import { UserModule } from '../users/user.module';
+import { EquivalenciaProducto } from './entities/equivalencia.entity';
+import { ImportacionController } from './importacion.controller';
+import { ImportacionService } from './importacion.service';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([EquivalenciaProducto]),
+    ComprobanteModule,
+    ProductosModule,
+    InventarioModule,
+    PeriodosModule,
+    TipoCambioModule,
+    UserModule,
+  ],
+  controllers: [ImportacionController],
+  providers: [ImportacionService],
+})
+export class ImportacionModule {}
