@@ -72,6 +72,23 @@ export class Producto {
   @Column({ length: 50, nullable: true })
   codigo: string;
 
+  /** Código de producto SUNAT: catálogo CCNU (UNSPSC v14), clase o producto */
+  @Column({ name: 'codigo_sunat', type: 'varchar', length: 8, nullable: true })
+  codigoSunat: string | null;
+
+  /** Tabla 5 de SUNAT: tipo de existencia (01 mercaderías…) */
+  @Column({
+    name: 'tipo_existencia',
+    type: 'varchar',
+    length: 2,
+    nullable: true,
+  })
+  tipoExistencia: string | null;
+
+  /** Tabla 6 de SUNAT: unidad de medida UN/ECE (NIU, KGM, BX…) */
+  @Column({ name: 'codigo_unidad', type: 'varchar', length: 3, nullable: true })
+  codigoUnidad: string | null;
+
   /**
    * Precio unitario del producto
    */

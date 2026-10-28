@@ -18,6 +18,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import type { CpeDocumento, CpeLinea } from './cpe/cpe.types';
+import { CODIGOS_EXISTENCIA, CODIGOS_UNIDAD } from '../catalogos/tablas-sunat';
 
 /** Máximo de XML por carga (cada uno pesa unos pocos KB) */
 export const MAXIMO_ARCHIVOS = 200;
@@ -67,6 +68,30 @@ export class NuevoProductoDto {
   @IsString()
   @MaxLength(50)
   codigo?: string;
+
+  @ApiPropertyOptional({
+    example: '50131700',
+    description: 'Código SUNAT (CCNU)',
+  })
+  @IsOptional()
+  @Matches(/^\d{8}$/)
+  codigoSunat?: string;
+
+  @ApiPropertyOptional({
+    example: '01',
+    description: 'Tipo de existencia (Tabla 5)',
+  })
+  @IsOptional()
+  @IsIn(CODIGOS_EXISTENCIA)
+  tipoExistencia?: string;
+
+  @ApiPropertyOptional({
+    example: 'NIU',
+    description: 'Unidad SUNAT (Tabla 6)',
+  })
+  @IsOptional()
+  @IsIn(CODIGOS_UNIDAD)
+  codigoUnidad?: string;
 }
 
 /** Qué hacer con una línea del XML */
@@ -261,7 +286,12 @@ export class RegistrarDto {
 
 export type Operacion = 'compra' | 'venta';
 
-export type OrigenSugerencia = 'equivalencia' | 'codigo' | 'gtin' | 'nombre';
+export type OrigenSugerencia =
+  | 'equivalencia'
+  | 'codigo'
+  | 'gtin'
+  | 'ccnu'
+  | 'nombre';
 
 export type Sugerencia =
   | {

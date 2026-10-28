@@ -20,6 +20,7 @@ import { Almacen } from '../almacen/entities/almacen.entity';
 import { PeriodoContableService } from '../periodos/service';
 import { TipoCambioService } from '../tipo-cambio/service/tipo-cambio.service';
 import { PersonaService } from '../users/services/person.service';
+import { CatalogosService } from '../catalogos/catalogos.service';
 import { CpeError, leerCpe } from './cpe/cpe.parser';
 import { leerSire, SireError } from './sire/sire.parser';
 import { leerPlantilla, PlantillaError } from './plantilla/plantilla.parser';
@@ -40,6 +41,7 @@ import type {
   LineaManualDto,
   LineaPrevia,
   OrigenArchivo,
+  OrigenSugerencia,
   RegistrarItemDto,
   Operacion,
   PrevisualizarDto,
@@ -97,6 +99,7 @@ export class ImportacionService {
     private readonly periodos: PeriodoContableService,
     private readonly tipoCambio: TipoCambioService,
     private readonly personas: PersonaService,
+    private readonly catalogos: CatalogosService,
   ) {}
 
   // ───────────────────────── Vista previa ─────────────────────────
@@ -724,7 +727,7 @@ export class ImportacionService {
   ): Sugerencia | null {
     const deProducto = (
       p: Producto,
-      origen: 'equivalencia' | 'codigo' | 'gtin' | 'nombre',
+      origen: OrigenSugerencia,
       factor = 1,
     ): Sugerencia => ({
       tipo: 'producto',
@@ -734,7 +737,7 @@ export class ImportacionService {
       unidadMedida: p.unidadMedida,
       factor,
       origen,
-      segura: origen !== 'nombre',
+      segura: origen !== 'nombre' && origen !== 'ccnu',
     });
 
     if (l.cuentaContable) {
@@ -769,6 +772,11 @@ export class ImportacionService {
     if (c) return deProducto(c, 'codigo');
     const g = porCodigo(l.codigoGtin);
     if (g) return deProducto(g, 'gtin');
+    // Código SUNAT: solo si un único producto lo tiene (muchos comparten clase)
+    if (l.codigoSunat) {
+      const conCcnu = productos.filter((p) => p.codigoSunat === l.codigoSunat);
+      if (conCcnu.length === 1) return deProducto(conCcnu[0], 'ccnu');
+    }
 
     let mejor: Producto | null = null;
     let puntaje = 0;
@@ -1145,6 +1153,13 @@ export class ImportacionService {
         normalizar(p.nombre) === normalizar(n.nombre),
     );
     if (igual) return igual;
+    // Un código SUNAT que no está en el catálogo no impide crear el producto
+    let codigoSunat = n.codigoSunat;
+    if (codigoSunat) {
+      await this.catalogos.validarCcnu(codigoSunat).catch(() => {
+        codigoSunat = undefined;
+      });
+    }
     const creado = await this.productos.create(
       {
         idCategoria: n.idCategoria,
@@ -1153,6 +1168,9 @@ export class ImportacionService {
         descripcion: n.nombre.trim(),
         unidadMedida: n.unidadMedida,
         codigo,
+        codigoSunat,
+        tipoExistencia: n.tipoExistencia ?? '01',
+        codigoUnidad: n.codigoUnidad,
       },
       personaId,
     );

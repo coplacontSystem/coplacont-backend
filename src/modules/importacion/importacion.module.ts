@@ -7,6 +7,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
 import { TipoCambioModule } from '../tipo-cambio/tipo-cambio.module';
 import { UserModule } from '../users/user.module';
 import { ReportesModule } from '../reportes/reportes.module';
+import { CatalogosModule } from '../catalogos/catalogos.module';
 import { PlantillaReporte } from './plantilla/plantilla.reporte';
 import { EquivalenciaProducto } from './entities/equivalencia.entity';
 import { ImportacionController } from './importacion.controller';
@@ -22,6 +23,7 @@ import { ImportacionService } from './importacion.service';
     TipoCambioModule,
     UserModule,
     ReportesModule,
+    CatalogosModule,
   ],
   controllers: [ImportacionController],
   providers: [ImportacionService, PlantillaReporte],
