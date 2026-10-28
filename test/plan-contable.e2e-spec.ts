@@ -7,7 +7,11 @@ import {
   Empresa,
   esperarStatus,
 } from './support/api';
-import { PCGE_2019 } from 'src/modules/contabilidad/data/pcge-2019';
+import { planesIncluidos } from 'src/modules/contabilidad/planes/plan-archivo';
+
+const PCGE_2019 = planesIncluidos().find(
+  (p) => p.codigo === 'PCGE2019',
+)!.cuentas;
 
 describe('Plan contable (e2e)', () => {
   let app: INestApplication;

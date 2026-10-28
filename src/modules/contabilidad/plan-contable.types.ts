@@ -117,4 +117,7 @@ export interface PlanVista {
   codigoSunat: string;
   vigenteDesde: string;
   vigenteHasta: string | null;
+  nota: string | null;
+  elementos: Record<string, string>;
+  cuentasSugeridas: Record<string, string>;
 }

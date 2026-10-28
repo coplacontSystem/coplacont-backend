@@ -1,47 +1,65 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { PCGE_2019 } from './data/pcge-2019';
 import { naturalezaDe, nivelDe } from './plan-contable.reglas';
+import {
+  PlanArchivo,
+  planesIncluidos,
+  validarPlan,
+} from './planes/plan-archivo';
+import { EquivalenciasService } from './planes/equivalencias.service';
 
-/** Carga los planes oficiales al iniciar; si ya están completos no hace nada */
+/**
+ * Carga los planes oficiales de data/planes al iniciar (idempotente): crea
+ * las cuentas que falten y actualiza los datos del plan. Después propone las
+ * equivalencias entre planes que aún no las tengan.
+ */
 @Injectable()
 export class PlanContableSeed implements OnModuleInit {
   private readonly logger = new Logger(PlanContableSeed.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly equivalencias: EquivalenciasService,
+  ) {}
 
   async onModuleInit() {
+    for (const plan of planesIncluidos()) {
+      const errores = validarPlan(plan);
+      if (errores.length) {
+        this.logger.error(
+          `Plan ${plan.codigo} inválido: ${errores.slice(0, 5).join('; ')}`,
+        );
+        continue;
+      }
+      try {
+        await this.cargarPlan(plan);
+      } catch (error) {
+        this.logger.error(
+          `No se pudo cargar el plan ${plan.codigo}: ${(error as Error).message}`,
+        );
+      }
+    }
     try {
-      await this.cargarPlan({
-        codigo: 'PCGE2019',
-        nombre: 'Plan Contable General Empresarial 2019',
-        norma: 'Resolución N° 002-2019-EF/30',
-        codigoSunat: '01',
-        vigenteDesde: '2020-01-01',
-        porDefecto: true,
-        cuentas: PCGE_2019,
-      });
+      await this.equivalencias.proponerFaltantes();
     } catch (error) {
       this.logger.error(
-        `No se pudo cargar el plan contable: ${(error as Error).message}`,
+        `No se pudieron proponer equivalencias: ${(error as Error).message}`,
       );
     }
   }
 
-  private async cargarPlan(p: {
-    codigo: string;
-    nombre: string;
-    norma: string;
-    codigoSunat: string;
-    vigenteDesde: string;
-    porDefecto: boolean;
-    cuentas: readonly (readonly [string, string])[];
-  }) {
+  async cargarPlan(p: PlanArchivo) {
     const q = this.dataSource;
     await q.query(
-      `INSERT INTO plan_contable (codigo, nombre, norma, codigo_sunat, vigente_desde, por_defecto)
-       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (codigo) DO NOTHING`,
+      `INSERT INTO plan_contable
+         (codigo, nombre, norma, codigo_sunat, vigente_desde, por_defecto,
+          elementos, cuentas_sugeridas, nota)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (codigo) DO UPDATE
+          SET nombre = EXCLUDED.nombre, norma = EXCLUDED.norma,
+              codigo_sunat = EXCLUDED.codigo_sunat, elementos = EXCLUDED.elementos,
+              cuentas_sugeridas = EXCLUDED.cuentas_sugeridas, nota = EXCLUDED.nota`,
       [
         p.codigo,
         p.nombre,
@@ -49,6 +67,9 @@ export class PlanContableSeed implements OnModuleInit {
         p.codigoSunat,
         p.vigenteDesde,
         p.porDefecto,
+        JSON.stringify(p.elementos ?? {}),
+        JSON.stringify(p.cuentasSugeridas ?? {}),
+        p.nota ?? null,
       ],
     );
     const [plan]: { id: number }[] = await q.query(
@@ -56,10 +77,22 @@ export class PlanContableSeed implements OnModuleInit {
       [p.codigo],
     );
     const idPlan = Number(plan.id);
-    const existentes: { id: number; codigo: string }[] = await q.query(
-      `SELECT id, codigo FROM cuenta_contable WHERE id_plan = $1 AND id_persona IS NULL`,
-      [idPlan],
-    );
+    const existentes: { id: number; codigo: string; nombre: string }[] =
+      await q.query(
+        `SELECT id, codigo, nombre FROM cuenta_contable WHERE id_plan = $1 AND id_persona IS NULL`,
+        [idPlan],
+      );
+    // Nombres corregidos en el archivo del plan
+    const nombres = new Map(p.cuentas);
+    for (const c of existentes) {
+      const nuevo = nombres.get(c.codigo);
+      if (nuevo && nuevo !== c.nombre) {
+        await q.query(`UPDATE cuenta_contable SET nombre = $2 WHERE id = $1`, [
+          c.id,
+          nuevo,
+        ]);
+      }
+    }
     if (existentes.length >= p.cuentas.length) return;
 
     // De nivel en nivel para que cada cuenta encuentre a su padre ya creado

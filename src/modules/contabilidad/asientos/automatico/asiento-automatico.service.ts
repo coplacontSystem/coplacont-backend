@@ -73,11 +73,24 @@ export class AsientoAutomaticoService {
     const c = await this.dataSource
       .getRepository(ConfiguracionContable)
       .findOne({ where: { idPersona: personaId } });
-    return { ...cuentasPorDefecto(), ...(c?.cuentas ?? {}) };
+    // Lo sugerido por el plan de la empresa, y encima lo que ella eligió
+    return { ...(await this.porDefecto(personaId)), ...(c?.cuentas ?? {}) };
+  }
+
+  /** Cuentas sugeridas por el plan de la empresa (o las de siempre) */
+  private async porDefecto(personaId: number): Promise<CuentasAutomaticas> {
+    const plan = await this.plan.planDe(personaId);
+    const sugeridas = Object.fromEntries(
+      Object.entries(plan.cuentasSugeridas ?? {}).filter(
+        ([k]) => k in CUENTAS_AUTOMATICAS,
+      ),
+    );
+    return { ...cuentasPorDefecto(), ...sugeridas };
   }
 
   async vistaCuentas(personaId: number) {
     const elegidas = await this.cuentas(personaId);
+    const base = await this.porDefecto(personaId);
     const claves = Object.keys(CUENTAS_AUTOMATICAS) as ClaveCuenta[];
     return Promise.all(
       claves.map(async (clave) => {
@@ -94,7 +107,7 @@ export class AsientoAutomaticoService {
           clave,
           uso: CUENTAS_AUTOMATICAS[clave].nombre,
           codigo,
-          porDefecto: CUENTAS_AUTOMATICAS[clave].codigo,
+          porDefecto: base[clave],
           nombreCuenta: r.nombre,
           error: r.error,
         };
@@ -121,8 +134,9 @@ export class AsientoAutomaticoService {
     const actual =
       (await repo.findOne({ where: { idPersona: personaId } }))?.cuentas ?? {};
     const cuentas = { ...actual };
+    const base = await this.porDefecto(personaId);
     for (const k of claves) {
-      if (cambios[k] === CUENTAS_AUTOMATICAS[k].codigo) delete cuentas[k];
+      if (cambios[k] === base[k]) delete cuentas[k];
       else cuentas[k] = cambios[k];
     }
     await repo.save({ idPersona: personaId, cuentas });

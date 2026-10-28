@@ -30,4 +30,15 @@ export class PlanContable {
   /** Plan que se asigna a las empresas que no eligieron otro */
   @Column({ name: 'por_defecto', default: false })
   porDefecto: boolean;
+
+  /** Nombre de cada elemento (primer dígito) en este plan */
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  elementos: Record<string, string>;
+
+  /** Cuenta sugerida para cada rol de los asientos automáticos */
+  @Column({ name: 'cuentas_sugeridas', type: 'jsonb', default: () => "'{}'" })
+  cuentasSugeridas: Record<string, string>;
+
+  @Column({ type: 'varchar', length: 300, nullable: true })
+  nota: string | null;
 }

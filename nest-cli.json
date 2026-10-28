@@ -8,6 +8,10 @@
       {
         "include": "modules/catalogos/data/*.gz",
         "outDir": "dist"
+      },
+      {
+        "include": "modules/contabilidad/data/planes/*.json",
+        "outDir": "dist"
       }
     ]
   }

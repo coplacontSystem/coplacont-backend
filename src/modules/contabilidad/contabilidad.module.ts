@@ -19,6 +19,9 @@ import { ReportesModule } from '../reportes/reportes.module';
 import { LibroDiarioService } from './libros/libro-diario.service';
 import { LibroDiarioReporte } from './libros/libro-diario.reporte';
 import { LibroDiarioController } from './libros/libro-diario.controller';
+import { CuentaEquivalencia } from './planes/equivalencia.entity';
+import { EquivalenciasService } from './planes/equivalencias.service';
+import { EquivalenciasController } from './planes/equivalencias.controller';
 
 @Module({
   imports: [
@@ -29,6 +32,7 @@ import { LibroDiarioController } from './libros/libro-diario.controller';
       AsientoLinea,
       AreaContable,
       ConfiguracionContable,
+      CuentaEquivalencia,
     ]),
     UserModule,
     ReportesModule,
@@ -38,6 +42,7 @@ import { LibroDiarioController } from './libros/libro-diario.controller';
     AsientoController,
     AreaController,
     LibroDiarioController,
+    EquivalenciasController,
   ],
   providers: [
     PlanContableService,
@@ -47,6 +52,7 @@ import { LibroDiarioController } from './libros/libro-diario.controller';
     AsientoAutomaticoService,
     LibroDiarioService,
     LibroDiarioReporte,
+    EquivalenciasService,
   ],
   exports: [
     PlanContableService,

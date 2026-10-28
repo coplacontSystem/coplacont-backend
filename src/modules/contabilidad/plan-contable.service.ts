@@ -72,7 +72,7 @@ export class PlanContableService {
 
   async planes(): Promise<PlanVista[]> {
     const filas = await this.query(
-      `SELECT id, codigo, nombre, norma, codigo_sunat,
+      `SELECT id, codigo, nombre, norma, codigo_sunat, nota, elementos, cuentas_sugeridas,
               to_char(vigente_desde, 'YYYY-MM-DD') AS desde,
               to_char(vigente_hasta, 'YYYY-MM-DD') AS hasta
          FROM plan_contable ORDER BY vigente_desde`,
@@ -85,6 +85,9 @@ export class PlanContableService {
       codigoSunat: f.codigo_sunat,
       vigenteDesde: f.desde,
       vigenteHasta: f.hasta ?? null,
+      nota: f.nota ?? null,
+      elementos: f.elementos ?? {},
+      cuentasSugeridas: f.cuentas_sugeridas ?? {},
     }));
   }
 
@@ -119,7 +122,9 @@ export class PlanContableService {
     const por = new Map(filas.map((f) => [f.elemento, f]));
     return {
       plan,
-      elementos: Object.entries(ELEMENTOS).map(([elemento, nombre]) => ({
+      elementos: Object.entries(
+        Object.keys(plan.elementos ?? {}).length ? plan.elementos : ELEMENTOS,
+      ).map(([elemento, nombre]) => ({
         elemento,
         nombre,
         cuentas: Number(por.get(elemento)?.total ?? 0),
