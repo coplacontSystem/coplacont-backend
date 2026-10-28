@@ -21,6 +21,7 @@ import { PeriodoContableService } from '../periodos/service';
 import { TipoCambioService } from '../tipo-cambio/service/tipo-cambio.service';
 import { PersonaService } from '../users/services/person.service';
 import { CatalogosService } from '../catalogos/catalogos.service';
+import { CODIGOS_UNIDAD } from '../catalogos/tablas-sunat';
 import { CpeError, leerCpe } from './cpe/cpe.parser';
 import { leerSire, SireError } from './sire/sire.parser';
 import { leerPlantilla, PlantillaError } from './plantilla/plantilla.parser';
@@ -1170,7 +1171,11 @@ export class ImportacionService {
         codigo,
         codigoSunat,
         tipoExistencia: n.tipoExistencia ?? '01',
-        codigoUnidad: n.codigoUnidad,
+        // Unidades del XML fuera de la Tabla 6 conocida se dejan sin código
+        codigoUnidad:
+          n.codigoUnidad && CODIGOS_UNIDAD.includes(n.codigoUnidad)
+            ? n.codigoUnidad
+            : undefined,
       },
       personaId,
     );

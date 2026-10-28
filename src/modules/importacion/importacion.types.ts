@@ -90,7 +90,7 @@ export class NuevoProductoDto {
     description: 'Unidad SUNAT (Tabla 6)',
   })
   @IsOptional()
-  @IsIn(CODIGOS_UNIDAD)
+  @Matches(/^[A-Z0-9]{1,3}$/)
   codigoUnidad?: string;
 }
 
