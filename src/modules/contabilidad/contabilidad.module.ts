@@ -13,6 +13,8 @@ import { AsientoService } from './asientos/asiento.service';
 import { AreaContable } from './areas/area.entity';
 import { AreaController } from './areas/area.controller';
 import { AreaService } from './areas/area.service';
+import { AsientoAutomaticoService } from './asientos/automatico/asiento-automatico.service';
+import { ConfiguracionContable } from './asientos/automatico/cuentas-automaticas';
 
 @Module({
   imports: [
@@ -22,6 +24,7 @@ import { AreaService } from './areas/area.service';
       AsientoContable,
       AsientoLinea,
       AreaContable,
+      ConfiguracionContable,
     ]),
     UserModule,
   ],
@@ -31,7 +34,13 @@ import { AreaService } from './areas/area.service';
     PlanContableSeed,
     AsientoService,
     AreaService,
+    AsientoAutomaticoService,
   ],
-  exports: [PlanContableService, AsientoService, AreaService],
+  exports: [
+    PlanContableService,
+    AsientoService,
+    AreaService,
+    AsientoAutomaticoService,
+  ],
 })
 export class ContabilidadModule {}

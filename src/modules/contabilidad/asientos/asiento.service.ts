@@ -27,9 +27,19 @@ interface Periodo {
   cerrado: boolean;
 }
 
+/** Asiento automático armado a partir de una compra o venta */
+export interface AsientoAutomatico {
+  idComprobante: number;
+  origen: 'compra' | 'venta';
+  fecha: string;
+  glosa: string;
+  referencia: string;
+  lineas: LineaAsientoDto[];
+}
+
 /**
- * Asientos contables (Libro Diario). Esta fase cubre los manuales; los
- * automáticos de compras y ventas usarán el mismo modelo con otro origen.
+ * Asientos contables (Libro Diario): manuales y automáticos de compras y
+ * ventas (uno por comprobante), con el mismo modelo y numeración.
  */
 @Injectable()
 export class AsientoService {
@@ -207,6 +217,76 @@ export class AsientoService {
       );
     });
     return this.detalle(personaId, id);
+  }
+
+  /**
+   * Crea o actualiza el asiento automático de un comprobante. Conserva su
+   * número si sigue en el mismo periodo; si estaba anulado, lo reactiva.
+   */
+  async guardarAutomatico(
+    personaId: number,
+    a: AsientoAutomatico,
+    usuario: string,
+  ): Promise<{ id: number; nuevo: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const periodo = await this.periodoAbierto(m, personaId, a.fecha);
+      const lineas = await this.validarLineas(m, personaId, a.lineas);
+      const total = lineas.reduce((s, l) => s + l.debe, 0);
+      const [actual] = await m.query(
+        `SELECT id, id_periodo, numero FROM asiento_contable
+          WHERE id_persona = $1 AND id_comprobante = $2`,
+        [personaId, a.idComprobante],
+      );
+      if (actual) {
+        const id = Number(actual.id);
+        const numero =
+          periodo.id === Number(actual.id_periodo)
+            ? Number(actual.numero)
+            : await this.siguienteNumero(m, personaId, periodo.id);
+        await m.query(
+          `UPDATE asiento_contable
+              SET id_periodo = $2, numero = $3, fecha = $4, glosa = $5, referencia = $6,
+                  total_debe = $7, total_haber = $7, estado = 'registrado',
+                  fecha_anulacion = NULL, anulado_por = NULL, motivo_anulacion = NULL,
+                  modificado_por = $8, fecha_actualizacion = now()
+            WHERE id = $1`,
+          [
+            id,
+            periodo.id,
+            numero,
+            a.fecha,
+            a.glosa,
+            a.referencia,
+            total,
+            usuario,
+          ],
+        );
+        await m.query(`DELETE FROM asiento_linea WHERE id_asiento = $1`, [id]);
+        await this.insertarLineas(m, id, lineas);
+        return { id, nuevo: false };
+      }
+      const numero = await this.siguienteNumero(m, personaId, periodo.id);
+      const [nuevo] = await m.query(
+        `INSERT INTO asiento_contable
+           (id_persona, id_periodo, numero, fecha, glosa, referencia, origen, estado,
+            total_debe, total_haber, creado_por, id_comprobante)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'registrado', $8, $8, $9, $10) RETURNING id`,
+        [
+          personaId,
+          periodo.id,
+          numero,
+          a.fecha,
+          a.glosa,
+          a.referencia,
+          a.origen,
+          total,
+          usuario,
+          a.idComprobante,
+        ],
+      );
+      await this.insertarLineas(m, Number(nuevo.id), lineas);
+      return { id: Number(nuevo.id), nuevo: true };
+    });
   }
 
   /* ---------- Reglas ---------- */

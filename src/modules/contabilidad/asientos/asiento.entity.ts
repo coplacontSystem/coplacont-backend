@@ -26,6 +26,11 @@ const decimal = {
   unique: true,
 })
 @Index('IDX_asiento_fecha', ['idPersona', 'fecha'])
+// Un solo asiento automático por comprobante
+@Index('UQ_asiento_comprobante', ['idComprobante'], {
+  unique: true,
+  where: '"id_comprobante" IS NOT NULL',
+})
 export class AsientoContable {
   @PrimaryGeneratedColumn()
   id: number;
@@ -51,6 +56,10 @@ export class AsientoContable {
 
   @Column({ type: 'varchar', length: 10, default: 'manual' })
   origen: OrigenAsiento;
+
+  /** Compra o venta que lo generó (asientos automáticos) */
+  @Column({ name: 'id_comprobante', type: 'int', nullable: true })
+  idComprobante: number | null;
 
   @Column({ type: 'varchar', length: 10, default: 'registrado' })
   estado: EstadoAsiento;

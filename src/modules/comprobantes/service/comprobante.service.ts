@@ -37,6 +37,7 @@ import {
 import { KardexMaterializadoService } from 'src/modules/inventario/valoracion/kardex-materializado.service';
 import { PlanContableService } from 'src/modules/contabilidad/plan-contable.service';
 import { AreaService } from 'src/modules/contabilidad/areas/area.service';
+import { AsientoAutomaticoService } from 'src/modules/contabilidad/asientos/automatico/asiento-automatico.service';
 import { CreateComprobanteDetalleDto } from '../dto/comprobante-detalle/create-comprobante-detalle.dto';
 
 const esServicio = (d: CreateComprobanteDetalleDto) =>
@@ -65,6 +66,7 @@ export class ComprobanteService implements OnModuleInit {
     private readonly kardex: KardexMaterializadoService,
     private readonly planContable: PlanContableService,
     private readonly areas: AreaService,
+    private readonly asientosAutomaticos: AsientoAutomaticoService,
   ) {}
 
   /**
@@ -158,6 +160,13 @@ export class ComprobanteService implements OnModuleInit {
 
     const idComprobante = await runInTransaction(() =>
       this.registrarEnTransaccion(dto, personaId, cuentasPorCodigo),
+    );
+    // Asiento del Libro Diario: si falla (p. ej. falta una cuenta), el
+    // comprobante queda registrado y el asiento se genera después
+    await this.asientosAutomaticos.generarSinFallar(
+      personaId,
+      idComprobante,
+      'Automático',
     );
 
     const guardado = await this.comprobanteRepository.findOne({
