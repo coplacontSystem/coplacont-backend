@@ -30,6 +30,8 @@ export interface CpeLinea {
   /** Catálogo 07: 10 gravado, 20 exonerado, 30 inafecto, 40 exportación… */
   afectacionIgv: string | null;
   gratuita: boolean;
+  /** Plantilla Excel: cuenta de gasto o ingreso indicada para la línea */
+  cuentaContable?: string | null;
 }
 
 export interface CpeCuota {

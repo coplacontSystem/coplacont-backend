@@ -6,6 +6,8 @@ import { InventarioModule } from '../inventario/inventario.module';
 import { PeriodosModule } from '../periodos/periodos.module';
 import { TipoCambioModule } from '../tipo-cambio/tipo-cambio.module';
 import { UserModule } from '../users/user.module';
+import { ReportesModule } from '../reportes/reportes.module';
+import { PlantillaReporte } from './plantilla/plantilla.reporte';
 import { EquivalenciaProducto } from './entities/equivalencia.entity';
 import { ImportacionController } from './importacion.controller';
 import { ImportacionService } from './importacion.service';
@@ -19,8 +21,9 @@ import { ImportacionService } from './importacion.service';
     PeriodosModule,
     TipoCambioModule,
     UserModule,
+    ReportesModule,
   ],
   controllers: [ImportacionController],
-  providers: [ImportacionService],
+  providers: [ImportacionService, PlantillaReporte],
 })
 export class ImportacionModule {}

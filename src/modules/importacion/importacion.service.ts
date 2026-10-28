@@ -22,6 +22,7 @@ import { TipoCambioService } from '../tipo-cambio/service/tipo-cambio.service';
 import { PersonaService } from '../users/services/person.service';
 import { CpeError, leerCpe } from './cpe/cpe.parser';
 import { leerSire, SireError } from './sire/sire.parser';
+import { leerPlantilla, PlantillaError } from './plantilla/plantilla.parser';
 import type { CpeDocumento, CpeLinea } from './cpe/cpe.types';
 import { EquivalenciaProducto } from './entities/equivalencia.entity';
 import {
@@ -105,7 +106,9 @@ export class ImportacionService {
     dto: PrevisualizarDto,
   ): Promise<ArchivoPrevio[]> {
     const ruc = await this.rucEmpresa(personaId);
-    const lecturas = dto.archivos.flatMap((a) => this.leerArchivo(a, ruc));
+    const lecturas = (
+      await Promise.all(dto.archivos.map((a) => this.leerArchivo(a, ruc)))
+    ).flat();
     const periodo = await this.periodoVigente(personaId);
     const productos = await this.dataSource.getRepository(Producto).find({
       where: { persona: { id: personaId }, estado: true },
@@ -213,7 +216,7 @@ export class ImportacionService {
 
       if (!doc.lineas.length) {
         avisos.push(
-          'El TXT no trae el detalle: agrega las líneas o regístralo sin detalle',
+          'El archivo no trae el detalle: agrega las líneas o regístralo sin detalle',
         );
       }
 
@@ -229,7 +232,7 @@ export class ImportacionService {
         Math.abs(suma - doc.totales.total) > TOLERANCIA_TOTAL
       ) {
         avisos.push(
-          `La suma de las líneas (${suma.toFixed(2)}) no coincide con el total del XML (${doc.totales.total.toFixed(2)}): puede haber descuentos globales, anticipos u otros tributos. Se registrará la suma de las líneas`,
+          `La suma de las líneas (${suma.toFixed(2)}) no coincide con el total del comprobante (${doc.totales.total.toFixed(2)}): puede haber descuentos globales, anticipos u otros tributos. Se registrará la suma de las líneas`,
         );
       }
       if (doc.lineas.some((x) => x.gratuita)) {
@@ -305,11 +308,13 @@ export class ImportacionService {
     if (dto.idAlmacen) await this.validarAlmacen(personaId, dto.idAlmacen);
     const catalogo = await this.catalogo();
 
-    const lecturas = dto.archivos.map((a, i) => ({
-      archivo: a,
-      i,
-      lectura: this.leerArchivo(a, ruc)[0],
-    }));
+    const lecturas = await Promise.all(
+      dto.archivos.map(async (a, i) => ({
+        archivo: a,
+        i,
+        lectura: (await this.leerArchivo(a, ruc))[0],
+      })),
+    );
     const esNota = (x: (typeof lecturas)[number]) =>
       'doc' in x.lectura &&
       (x.lectura.doc.tipoComprobante === '07' ||
@@ -372,7 +377,7 @@ export class ImportacionService {
   ): Promise<ResultadoRegistro> {
     const ruc = await this.rucEmpresa(personaId);
     if (dto.idAlmacen) await this.validarAlmacen(personaId, dto.idAlmacen);
-    const lectura = this.leerArchivo(dto.archivo, ruc).find(
+    const lectura = (await this.leerArchivo(dto.archivo, ruc)).find(
       (l) => l.indice === (dto.indice ?? 0),
     );
     if (!lectura) {
@@ -732,6 +737,15 @@ export class ImportacionService {
       segura: origen !== 'nombre',
     });
 
+    if (l.cuentaContable) {
+      return {
+        tipo: 'servicio',
+        codigoCuenta: l.cuentaContable,
+        idArea: null,
+        origen: 'plantilla',
+        segura: true,
+      };
+    }
     if (eq?.tipo === 'servicio' && eq.codigoCuenta) {
       return {
         tipo: 'servicio',
@@ -772,12 +786,19 @@ export class ImportacionService {
 
   // ───────────────────────── Apoyo ─────────────────────────
 
-  /** Un XML es un comprobante; un TXT de SIRE trae uno por fila */
-  private leerArchivo(a: ArchivoXmlDto, ruc: string): Lectura[] {
+  /**
+   * Un XML es un comprobante; un TXT de SIRE trae uno por fila y la
+   * plantilla Excel, uno por fila de la hoja Comprobantes.
+   */
+  private async leerArchivo(a: ArchivoXmlDto, ruc: string): Promise<Lectura[]> {
     const buffer = Buffer.from(a.contenido, 'base64');
     const inicio = buffer.subarray(0, 200).toString('latin1').trimStart();
     const esXml = inicio.startsWith('<') || /\.xml$/i.test(a.nombre);
     if (esXml) return [this.leerXml(a.nombre, buffer, ruc)];
+    // Un .xlsx es un ZIP: empieza con "PK"
+    if (buffer.subarray(0, 2).toString('latin1') === 'PK') {
+      return this.leerExcel(a.nombre, buffer, ruc);
+    }
 
     let sire: ReturnType<typeof leerSire>;
     try {
@@ -804,6 +825,40 @@ export class ImportacionService {
           error: `Fila ${f.fila}: el registro es del RUC ${rucTitular}, no de tu empresa (${ruc})`,
         };
       }
+      return { ...base, doc: documento, operacion, tipoCambio, avisos };
+    });
+  }
+
+  private async leerExcel(
+    nombre: string,
+    buffer: Buffer,
+    ruc: string,
+  ): Promise<Lectura[]> {
+    let filas: Awaited<ReturnType<typeof leerPlantilla>>;
+    try {
+      filas = await leerPlantilla(buffer);
+    } catch (e) {
+      return [
+        {
+          nombre,
+          indice: 0,
+          origen: 'excel',
+          error:
+            e instanceof PlantillaError
+              ? e.message
+              : 'No se pudo leer el Excel',
+        },
+      ];
+    }
+    return filas.map((f): Lectura => {
+      const base = { nombre, indice: f.fila, origen: 'excel' as const };
+      if (!f.ok) return { ...base, error: `Fila ${f.fila}: ${f.error}` };
+      const { documento, operacion, tipoCambio, avisos } = f.datos;
+      // La empresa es el emisor en ventas y el receptor en compras
+      const empresa =
+        operacion === 'venta' ? documento.emisor : documento.receptor;
+      empresa.numeroDocumento = ruc;
+      empresa.razonSocial = ruc;
       return { ...base, doc: documento, operacion, tipoCambio, avisos };
     });
   }

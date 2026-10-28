@@ -279,7 +279,7 @@ export type Sugerencia =
       tipo: 'servicio';
       codigoCuenta: string;
       idArea: number | null;
-      origen: 'equivalencia';
+      origen: 'equivalencia' | 'plantilla';
       segura: true;
     };
 
@@ -288,7 +288,7 @@ export interface LineaPrevia extends CpeLinea {
   sugerencia: Sugerencia | null;
 }
 
-export type OrigenArchivo = 'xml' | 'txt';
+export type OrigenArchivo = 'xml' | 'txt' | 'excel';
 
 export interface ArchivoPrevio {
   nombre: string;
