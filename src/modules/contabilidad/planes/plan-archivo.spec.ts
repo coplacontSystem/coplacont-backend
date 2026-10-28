@@ -13,7 +13,7 @@ describe('Planes de cuentas incluidos', () => {
   });
 
   it.each(planes.map((p) => [p.codigo, p]))('%s es válido', (_c, p) => {
-    expect(validarPlan(p as PlanArchivo)).toEqual([]);
+    expect(validarPlan(p)).toEqual([]);
   });
 
   it('el PCGE 2026 trae la errata corregida y las cuentas sugeridas', () => {

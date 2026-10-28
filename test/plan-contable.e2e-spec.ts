@@ -252,7 +252,7 @@ describe('Plan contable (e2e)', () => {
   });
 
   describe('Cambio de plan', () => {
-    it('no cambia de plan si hay subcuentas propias; sin ellas sí', async () => {
+    it('cambia de plan si nada lo impide y vuelve al anterior', async () => {
       const planes = (await api().get('/api/plan-contable/planes')).body;
       expect(planes.length).toBeGreaterThanOrEqual(1);
       const idPcge = planes.find((p: any) => p.codigo === 'PCGE2019').id;
@@ -263,10 +263,6 @@ describe('Plan contable (e2e)', () => {
         `INSERT INTO plan_contable (codigo, nombre, norma, codigo_sunat, vigente_desde)
          VALUES ('PRUEBA', 'Plan de prueba', 'Ninguna', '99', '2028-01-01') RETURNING id`,
       );
-      expect(
-        (await api().put('/api/plan-contable', { idPlan: Number(alt.id) }))
-          .status,
-      ).toBe(400);
       const ok = await otra.api.put('/api/plan-contable', {
         idPlan: Number(alt.id),
       });

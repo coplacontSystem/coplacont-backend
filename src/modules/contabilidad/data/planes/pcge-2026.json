@@ -6,7 +6,7 @@
   "vigenteDesde": "2026-01-01",
   "porDefecto": false,
   "fuente": "www.gob.pe/institucion/mef/informes-publicaciones/8559148-plan-contable-general-empresarial-pcge-2026",
-  "nota": "De aplicación obligatoria desde el 01/01/2028; puede adoptarse antes.",
+  "nota": "De aplicación obligatoria desde el 01/01/2028; puede adoptarse antes. Las áreas se crean sin cuenta de destino: el elemento 9 de este plan es por categoría (91 operación, 92 inversión, 93 financiamiento).",
   "erratas": [
     "70992→70902 (Relacionadas bajo 7090; el texto oficial repite 70992)"
   ],
@@ -33,6 +33,17 @@
     "variacion": "6111",
     "cargasImputables": "791"
   },
+  "areasSugeridas": [
+    {
+      "nombre": "Administración"
+    },
+    {
+      "nombre": "Ventas"
+    },
+    {
+      "nombre": "Producción"
+    }
+  ],
   "cuentas": [
     ["10", "EFECTIVO Y EQUIVALENTES AL EFECTIVO"],
     ["101", "Caja"],

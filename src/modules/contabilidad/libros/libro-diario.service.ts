@@ -86,7 +86,7 @@ export class LibroDiarioService {
     const filas: Fila[] = await this.dataSource.query(
       `SELECT a.id, a.numero, to_char(a.fecha, 'YYYY-MM-DD') AS fecha, a.glosa, a.referencia,
               a.origen, l.orden, l.glosa AS glosa_linea, l.debe, l.haber,
-              c.codigo AS cuenta, c.nombre AS nombre_cuenta,
+              c.codigo AS cuenta, c.nombre AS nombre_cuenta, c.id_plan,
               tc.codigo AS tipo_cp, cp.serie, cp.numero AS numero_cp,
               to_char(cp."fechaVencimiento", 'YYYY-MM-DD') AS vencimiento,
               e.tipo AS tipo_entidad, e."numeroDocumento" AS doc_entidad
@@ -155,8 +155,9 @@ export class LibroDiarioService {
     const nombres: Fila[] = codigos2.length
       ? await this.dataSource.query(
           `SELECT DISTINCT ON (codigo) codigo, nombre FROM cuenta_contable
-            WHERE codigo = ANY($1) AND id_persona IS NULL ORDER BY codigo, id`,
-          [codigos2],
+            WHERE codigo = ANY($1) AND id_persona IS NULL AND id_plan = ANY($2)
+            ORDER BY codigo, id`,
+          [codigos2, [...new Set(filas.map((f) => Number(f.id_plan)))]],
         )
       : [];
     const porCodigo = new Map(nombres.map((n) => [n.codigo, n.nombre]));

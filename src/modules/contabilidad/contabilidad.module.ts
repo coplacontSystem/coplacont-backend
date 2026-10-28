@@ -22,6 +22,10 @@ import { LibroDiarioController } from './libros/libro-diario.controller';
 import { CuentaEquivalencia } from './planes/equivalencia.entity';
 import { EquivalenciasService } from './planes/equivalencias.service';
 import { EquivalenciasController } from './planes/equivalencias.controller';
+import { PlanCargador } from './planes/plan-cargador';
+import { PlanesAdminService } from './planes/planes-admin.service';
+import { MigracionPlanService } from './planes/migracion-plan.service';
+import { PlanesAdminController } from './planes/planes-admin.controller';
 
 @Module({
   imports: [
@@ -43,6 +47,7 @@ import { EquivalenciasController } from './planes/equivalencias.controller';
     AreaController,
     LibroDiarioController,
     EquivalenciasController,
+    PlanesAdminController,
   ],
   providers: [
     PlanContableService,
@@ -53,6 +58,9 @@ import { EquivalenciasController } from './planes/equivalencias.controller';
     LibroDiarioService,
     LibroDiarioReporte,
     EquivalenciasService,
+    PlanCargador,
+    PlanesAdminService,
+    MigracionPlanService,
   ],
   exports: [
     PlanContableService,

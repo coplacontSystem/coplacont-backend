@@ -63,6 +63,13 @@ export class PeriodoContable {
   reabierto: boolean;
 
   /**
+   * Plan de cuentas del período. Al cambiar de plan (p. ej. al PCGE 2026)
+   * los períodos anteriores conservan el suyo. null = el plan de la empresa.
+   */
+  @Column({ name: 'id_plan', type: 'int', nullable: true })
+  idPlan: number | null;
+
+  /**
    * Método de valoración con que se valoriza el kardex de este período.
    * Se fija al crear el período y solo cambia mientras no tenga movimientos;
    * así un recálculo nunca revaloriza ejercicios anteriores con otro método.

@@ -72,7 +72,7 @@ export class PlanContableService {
 
   async planes(): Promise<PlanVista[]> {
     const filas = await this.query(
-      `SELECT id, codigo, nombre, norma, codigo_sunat, nota, elementos, cuentas_sugeridas,
+      `SELECT id, codigo, nombre, norma, codigo_sunat, nota, elementos, cuentas_sugeridas, areas_sugeridas,
               to_char(vigente_desde, 'YYYY-MM-DD') AS desde,
               to_char(vigente_hasta, 'YYYY-MM-DD') AS hasta
          FROM plan_contable ORDER BY vigente_desde`,
@@ -88,6 +88,7 @@ export class PlanContableService {
       nota: f.nota ?? null,
       elementos: f.elementos ?? {},
       cuentasSugeridas: f.cuentas_sugeridas ?? {},
+      areasSugeridas: f.areas_sugeridas ?? [],
     }));
   }
 
@@ -323,37 +324,5 @@ export class PlanContableService {
     });
     if (errores.length) throw new BadRequestException(errores);
     return por;
-  }
-
-  /** Cambia el plan de la empresa (p. ej. al PCGE 2026) */
-  async cambiarPlan(personaId: number, idPlan: number) {
-    const destino = (await this.planes()).find((p) => p.id === idPlan);
-    if (!destino) throw new NotFoundException('Plan contable no encontrado');
-    const actual = await this.planDe(personaId);
-    if (actual.id === idPlan) return this.resumen(personaId);
-    const [propias] = await this.query<{ n: string }>(
-      `SELECT COUNT(*) AS n FROM cuenta_contable WHERE id_plan = $1 AND id_persona = $2`,
-      [actual.id, personaId],
-    );
-    const [asiento] = await this.query(
-      `SELECT 1 FROM asiento_contable WHERE id_persona = $1 LIMIT 1`,
-      [personaId],
-    );
-    if (asiento) {
-      throw new BadRequestException(
-        'La empresa ya tiene asientos registrados con el plan actual: no se puede cambiar de plan',
-      );
-    }
-    if (Number(propias.n) > 0) {
-      throw new BadRequestException(
-        `La empresa tiene ${propias.n} subcuentas propias en ${actual.nombre}. ` +
-          'El cambio de plan con subcuentas propias requiere migrarlas',
-      );
-    }
-    await this.query(`UPDATE persona SET id_plan_contable = $2 WHERE id = $1`, [
-      personaId,
-      idPlan,
-    ]);
-    return this.resumen(personaId);
   }
 }

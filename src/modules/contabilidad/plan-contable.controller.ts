@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Patch,
@@ -16,6 +17,7 @@ import { JwtAuthGuard } from '../users/guards/jwt-auth.guard';
 import { CurrentUser } from '../users/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../users/decorators/current-user.decorator';
 import { PlanContableService } from './plan-contable.service';
+import { MigracionPlanService } from './planes/migracion-plan.service';
 import {
   ActualizarSubcuentaDto,
   CambiarPlanDto,
@@ -28,7 +30,10 @@ import {
 @UseGuards(JwtAuthGuard)
 @Controller('api/plan-contable')
 export class PlanContableController {
-  constructor(private readonly plan: PlanContableService) {}
+  constructor(
+    private readonly plan: PlanContableService,
+    private readonly migracion: MigracionPlanService,
+  ) {}
 
   @Get('planes')
   @ApiOperation({ summary: 'Planes contables oficiales disponibles' })
@@ -42,13 +47,29 @@ export class PlanContableController {
     return this.plan.resumen(empresaDe(user));
   }
 
+  @Post('cambio/previsualizar')
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      'Qué pasaría al cambiar de plan desde un período: cuentas, subcuentas, áreas y errores',
+  })
+  previsualizarCambio(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CambiarPlanDto,
+  ) {
+    return this.migracion.previsualizar(empresaDe(user), dto);
+  }
+
   @Put()
-  @ApiOperation({ summary: 'Cambiar el plan contable de la empresa' })
+  @ApiOperation({
+    summary:
+      'Cambiar el plan de la empresa desde un período (los anteriores conservan el suyo)',
+  })
   cambiarPlan(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CambiarPlanDto,
   ) {
-    return this.plan.cambiarPlan(empresaDe(user), dto.idPlan);
+    return this.migracion.migrar(empresaDe(user), dto);
   }
 
   @Get('cuentas')

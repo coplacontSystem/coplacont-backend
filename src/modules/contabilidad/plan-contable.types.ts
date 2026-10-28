@@ -10,6 +10,7 @@ import {
   Matches,
   MaxLength,
   MinLength,
+  IsObject,
 } from 'class-validator';
 import type { Naturaleza } from './entities/cuenta-contable.entity';
 
@@ -89,6 +90,22 @@ export class CambiarPlanDto {
   @IsInt()
   @IsNotEmpty()
   idPlan: number;
+
+  @ApiPropertyOptional({
+    description: 'Desde este período (y los siguientes); sin él, todos',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  idPeriodoDesde?: number;
+
+  @ApiPropertyOptional({
+    description: 'Cuenta del plan actual → cuenta del plan nuevo',
+    example: { '92': '911' },
+  })
+  @IsOptional()
+  @IsObject()
+  reasignar?: Record<string, string>;
 }
 
 export interface CuentaVista {
@@ -120,4 +137,5 @@ export interface PlanVista {
   nota: string | null;
   elementos: Record<string, string>;
   cuentasSugeridas: Record<string, string>;
+  areasSugeridas: { nombre: string; cuenta?: string; nombreCuenta?: string }[];
 }

@@ -15,20 +15,6 @@ import type {
 
 type Fila = Record<string, any>;
 
-/**
- * Áreas por defecto y su cuenta de destino. El PCGE deja la clase 9 a
- * criterio de la empresa; estas son las de uso común y se pueden cambiar.
- */
-const POR_DEFECTO = [
-  {
-    nombre: 'Administración',
-    cuenta: '94',
-    nombreCuenta: 'Gastos administrativos',
-  },
-  { nombre: 'Ventas', cuenta: '95', nombreCuenta: 'Gastos de ventas' },
-  { nombre: 'Producción', cuenta: '92', nombreCuenta: 'Costo de producción' },
-];
-
 @Injectable()
 export class AreaService {
   constructor(
@@ -150,20 +136,24 @@ export class AreaService {
     }
   }
 
+  /** Las áreas que sugiere el plan de la empresa (con su destino, si trae) */
   private async crearPorDefecto(personaId: number) {
-    for (const d of POR_DEFECTO) {
-      try {
-        await this.plan.crearSubcuenta(personaId, {
-          codigo: d.cuenta,
-          nombre: d.nombreCuenta,
-        });
-      } catch {
-        // Ya existe (la empresa la creó antes): se usa tal cual
+    const plan = await this.plan.planDe(personaId);
+    for (const d of plan.areasSugeridas ?? []) {
+      if (d.cuenta) {
+        try {
+          await this.plan.crearSubcuenta(personaId, {
+            codigo: d.cuenta,
+            nombre: d.nombreCuenta ?? d.nombre,
+          });
+        } catch {
+          // Ya existe (oficial o creada antes): se usa tal cual
+        }
       }
       await this.dataSource.query(
         `INSERT INTO area_contable (id_persona, nombre, cuenta_destino)
          VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-        [personaId, d.nombre, d.cuenta],
+        [personaId, d.nombre, d.cuenta ?? null],
       );
     }
   }

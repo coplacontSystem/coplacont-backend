@@ -41,6 +41,23 @@
     "variacion": "6111",
     "cargasImputables": "791"
   },
+  "areasSugeridas": [
+    {
+      "nombre": "Administración",
+      "cuenta": "94",
+      "nombreCuenta": "Gastos administrativos"
+    },
+    {
+      "nombre": "Ventas",
+      "cuenta": "95",
+      "nombreCuenta": "Gastos de ventas"
+    },
+    {
+      "nombre": "Producción",
+      "cuenta": "92",
+      "nombreCuenta": "Costo de producción"
+    }
+  ],
   "cuentas": [
     ["01", "Bienes y valores entregados"],
     ["02", "Derechos sobre instrumentos financieros"],

@@ -41,4 +41,23 @@ export class PlanContable {
 
   @Column({ type: 'varchar', length: 300, nullable: true })
   nota: string | null;
+
+  /** Áreas por defecto y su cuenta de destino */
+  @Column({ name: 'areas_sugeridas', type: 'jsonb', default: () => "'[]'" })
+  areasSugeridas: { nombre: string; cuenta?: string; nombreCuenta?: string }[];
+
+  /** incluido (viene con el sistema) o importado desde el panel */
+  @Column({ type: 'varchar', length: 10, default: 'incluido' })
+  origen: string;
+
+  /** Sube con cada actualización importada */
+  @Column({ type: 'int', default: 1 })
+  version: number;
+
+  @Column({
+    name: 'fecha_actualizacion',
+    type: 'timestamptz',
+    default: () => 'now()',
+  })
+  fechaActualizacion: Date;
 }

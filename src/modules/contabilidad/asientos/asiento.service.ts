@@ -23,6 +23,8 @@ const iso = (d: Date | string) => new Date(d).toISOString();
 
 interface Periodo {
   id: number;
+  /** Plan de cuentas del período (o el de la empresa) */
+  idPlan: number;
   año: number;
   cerrado: boolean;
 }
@@ -142,7 +144,12 @@ export class AsientoService {
   async crear(personaId: number, dto: GuardarAsientoDto, usuario: string) {
     const id = await this.dataSource.transaction(async (m) => {
       const periodo = await this.periodoAbierto(m, personaId, dto.fecha);
-      const lineas = await this.validarLineas(m, personaId, dto.lineas);
+      const lineas = await this.validarLineas(
+        m,
+        personaId,
+        periodo.idPlan,
+        dto.lineas,
+      );
       const numero = await this.siguienteNumero(m, personaId, periodo.id);
       const total = lineas.reduce((s, l) => s + l.debe, 0);
       const [a] = await m.query(
@@ -176,7 +183,12 @@ export class AsientoService {
     await this.dataSource.transaction(async (m) => {
       const actual = await this.editableOFalla(m, personaId, id);
       const periodo = await this.periodoAbierto(m, personaId, dto.fecha);
-      const lineas = await this.validarLineas(m, personaId, dto.lineas);
+      const lineas = await this.validarLineas(
+        m,
+        personaId,
+        periodo.idPlan,
+        dto.lineas,
+      );
       // Si la fecha cae en otro periodo, toma el número siguiente de ese periodo
       const numero =
         periodo.id === Number(actual.id_periodo)
@@ -230,7 +242,12 @@ export class AsientoService {
   ): Promise<{ id: number; nuevo: boolean }> {
     return this.dataSource.transaction(async (m) => {
       const periodo = await this.periodoAbierto(m, personaId, a.fecha);
-      const lineas = await this.validarLineas(m, personaId, a.lineas);
+      const lineas = await this.validarLineas(
+        m,
+        personaId,
+        periodo.idPlan,
+        a.lineas,
+      );
       const total = lineas.reduce((s, l) => s + l.debe, 0);
       const [actual] = await m.query(
         `SELECT id, id_periodo, numero FROM asiento_contable
@@ -307,7 +324,7 @@ export class AsientoService {
     fecha: string,
   ): Promise<Periodo> {
     const [p] = await m.query(
-      `SELECT id, "año", cerrado FROM periodo_contable
+      `SELECT id, "año", cerrado, id_plan FROM periodo_contable
         WHERE id_persona = $1 AND "fechaInicio" <= $2 AND "fechaFin" >= $2
         ORDER BY id LIMIT 1`,
       [personaId, fecha],
@@ -324,6 +341,9 @@ export class AsientoService {
     }
     return {
       id: Number(p.id),
+      idPlan: p.id_plan
+        ? Number(p.id_plan)
+        : (await this.plan.planDe(personaId)).id,
       año: Number(p.año),
       cerrado: Boolean(p.cerrado),
     };
@@ -333,9 +353,10 @@ export class AsientoService {
   private async validarLineas(
     m: EntityManager,
     personaId: number,
+    idPlan: number,
     lineas: LineaAsientoDto[],
   ) {
-    const plan = await this.plan.planDe(personaId);
+    const plan = { id: idPlan };
     const codigos = [...new Set(lineas.map((l) => l.codigoCuenta))];
     const cuentas: Fila[] = await m.query(
       `SELECT c.id, c.codigo, c.activa,

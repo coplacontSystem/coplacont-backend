@@ -23,6 +23,11 @@ export interface PlanArchivo {
   elementos: Record<string, string>;
   /** Cuenta sugerida para cada rol de los asientos automáticos */
   cuentasSugeridas: Record<string, string>;
+  /**
+   * Áreas que se crean a cada empresa, con su cuenta de destino (que se crea
+   * como subcuenta propia si el plan no la trae). Sin cuenta: sin destino.
+   */
+  areasSugeridas?: AreaSugerida[];
   cuentas: [codigo: string, nombre: string][];
 }
 
@@ -30,6 +35,12 @@ export interface PlanArchivo {
  * Junto al código compilado (los copia nest-cli) o, si no están ahí (p. ej.
  * un "start:dev" iniciado antes de agregar el archivo), en src.
  */
+export interface AreaSugerida {
+  nombre: string;
+  cuenta?: string;
+  nombreCuenta?: string;
+}
+
 export const DIRECTORIO_PLANES = [
   join(__dirname, '..', 'data', 'planes'),
   join(process.cwd(), 'src', 'modules', 'contabilidad', 'data', 'planes'),
