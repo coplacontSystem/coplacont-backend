@@ -15,6 +15,10 @@ import { AreaController } from './areas/area.controller';
 import { AreaService } from './areas/area.service';
 import { AsientoAutomaticoService } from './asientos/automatico/asiento-automatico.service';
 import { ConfiguracionContable } from './asientos/automatico/cuentas-automaticas';
+import { ReportesModule } from '../reportes/reportes.module';
+import { LibroDiarioService } from './libros/libro-diario.service';
+import { LibroDiarioReporte } from './libros/libro-diario.reporte';
+import { LibroDiarioController } from './libros/libro-diario.controller';
 
 @Module({
   imports: [
@@ -27,14 +31,22 @@ import { ConfiguracionContable } from './asientos/automatico/cuentas-automaticas
       ConfiguracionContable,
     ]),
     UserModule,
+    ReportesModule,
   ],
-  controllers: [PlanContableController, AsientoController, AreaController],
+  controllers: [
+    PlanContableController,
+    AsientoController,
+    AreaController,
+    LibroDiarioController,
+  ],
   providers: [
     PlanContableService,
     PlanContableSeed,
     AsientoService,
     AreaService,
     AsientoAutomaticoService,
+    LibroDiarioService,
+    LibroDiarioReporte,
   ],
   exports: [
     PlanContableService,
