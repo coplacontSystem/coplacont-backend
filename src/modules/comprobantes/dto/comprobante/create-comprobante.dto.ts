@@ -16,6 +16,14 @@ import { Moneda } from '../../enum/tipo-moneda.enum';
 import { MetodoValoracion } from '../../enum/metodo-valoracion.enum';
 import { CreateComprobanteDetalleDto } from '../comprobante-detalle/create-comprobante-detalle.dto';
 
+export class DesgloseTotalesDto {
+  @IsOptional() @IsNumber() @Min(0) gravada?: number;
+  @IsOptional() @IsNumber() @Min(0) exonerada?: number;
+  @IsOptional() @IsNumber() @Min(0) inafecta?: number;
+  @IsOptional() @IsNumber() @Min(0) igv?: number;
+  @IsOptional() @IsNumber() @Min(0) isc?: number;
+}
+
 export class CreateComprobanteDto {
   @ApiProperty({
     description: 'Referencia a la persona (id)',
@@ -118,6 +126,16 @@ export class CreateComprobanteDto {
   @IsOptional()
   @IsNumber()
   total?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Desglose del total cuando no hay detalles (bases por afectación, IGV e ISC)',
+    type: () => DesgloseTotalesDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DesgloseTotalesDto)
+  desglose?: DesgloseTotalesDto;
 
   @ApiPropertyOptional({
     description:

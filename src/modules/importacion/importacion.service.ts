@@ -5,6 +5,7 @@ import { Comprobante } from '../comprobantes/entities/comprobante';
 import { TablaDetalle } from '../comprobantes/entities/tabla-detalle.entity';
 import { ComprobanteService } from '../comprobantes/service/comprobante.service';
 import { ymd } from '../comprobantes/service/reglas-registro';
+import { grupoAfectacion } from '../comprobantes/service/comprobante-totales.service';
 import { Moneda } from '../comprobantes/enum/tipo-moneda.enum';
 import type { CreateComprobanteDto } from '../comprobantes/dto/comprobante/create-comprobante.dto';
 import type { CreateComprobanteDetalleDto } from '../comprobantes/dto/comprobante-detalle/create-comprobante-detalle.dto';
@@ -20,6 +21,7 @@ import { PeriodoContableService } from '../periodos/service';
 import { TipoCambioService } from '../tipo-cambio/service/tipo-cambio.service';
 import { PersonaService } from '../users/services/person.service';
 import { CpeError, leerCpe } from './cpe/cpe.parser';
+import { leerSire, SireError } from './sire/sire.parser';
 import type { CpeDocumento, CpeLinea } from './cpe/cpe.types';
 import { EquivalenciaProducto } from './entities/equivalencia.entity';
 import {
@@ -32,10 +34,12 @@ import {
   TOLERANCIA_TOTAL,
 } from './importacion.reglas';
 import type {
-  ArchivoARegistrarDto,
   ArchivoPrevio,
   ArchivoXmlDto,
+  LineaManualDto,
   LineaPrevia,
+  OrigenArchivo,
+  RegistrarItemDto,
   Operacion,
   PrevisualizarDto,
   RegistrarDto,
@@ -45,9 +49,29 @@ import type {
 } from './importacion.types';
 
 /** Lo que se lee de cada archivo antes de mirar la base de datos */
-type Lectura =
-  | { nombre: string; doc: CpeDocumento; operacion: Operacion }
-  | { nombre: string; error: string };
+type Lectura = {
+  nombre: string;
+  /** Fila del TXT (la cabecera es la 1); 0 en un XML */
+  indice: number;
+  origen: OrigenArchivo;
+} & (
+  | {
+      doc: CpeDocumento;
+      operacion: Operacion;
+      tipoCambio: number | null;
+      avisos: string[];
+    }
+  | { error: string }
+);
+
+/** Opciones con que se registra un comprobante de la cola */
+interface OpcionesRegistro {
+  tipoCambio?: number;
+  idAlmacen?: number;
+  resoluciones: ResolucionLineaDto[];
+  lineasManuales: LineaManualDto[];
+  sinDetalle: boolean;
+}
 
 const serieNumero = (d: Pick<CpeDocumento, 'serie' | 'numero'>) =>
   `${d.serie}-${d.numero}`;
@@ -81,7 +105,7 @@ export class ImportacionService {
     dto: PrevisualizarDto,
   ): Promise<ArchivoPrevio[]> {
     const ruc = await this.rucEmpresa(personaId);
-    const lecturas = dto.archivos.map((a) => this.leer(a, ruc));
+    const lecturas = dto.archivos.flatMap((a) => this.leerArchivo(a, ruc));
     const periodo = await this.periodoVigente(personaId);
     const productos = await this.dataSource.getRepository(Producto).find({
       where: { persona: { id: personaId }, estado: true },
@@ -102,12 +126,12 @@ export class ImportacionService {
     const salida: ArchivoPrevio[] = [];
     for (const l of lecturas) {
       if (!('doc' in l)) {
-        salida.push(this.archivoConError(l.nombre, l.error));
+        salida.push(this.archivoConError(l, l.error));
         continue;
       }
       const { doc, operacion } = l;
       const errores: string[] = [];
-      const avisos: string[] = [];
+      const avisos: string[] = [...l.avisos];
       const parte = operacion === 'compra' ? doc.emisor : doc.receptor;
       const entidad = await this.buscarEntidad(
         personaId,
@@ -149,10 +173,10 @@ export class ImportacionService {
       }
 
       // Moneda y tipo de cambio
-      let tc: number | null = null;
+      let tc: number | null = doc.moneda === 'USD' ? l.tipoCambio : null;
       if (doc.moneda !== 'PEN' && doc.moneda !== 'USD') {
         errores.push(`Moneda no soportada: ${doc.moneda}`);
-      } else if (doc.moneda === 'USD') {
+      } else if (doc.moneda === 'USD' && !tc) {
         if (!tiposDeCambio.has(doc.fechaEmision)) {
           tiposDeCambio.set(
             doc.fechaEmision,
@@ -187,6 +211,12 @@ export class ImportacionService {
         }
       }
 
+      if (!doc.lineas.length) {
+        avisos.push(
+          'El TXT no trae el detalle: agrega las líneas o regístralo sin detalle',
+        );
+      }
+
       // Totales: la suma de las líneas debe cuadrar con el total del XML
       const suma = r2(
         doc.lineas.reduce(
@@ -194,7 +224,10 @@ export class ImportacionService {
           0,
         ),
       );
-      if (Math.abs(suma - doc.totales.total) > TOLERANCIA_TOTAL) {
+      if (
+        doc.lineas.length &&
+        Math.abs(suma - doc.totales.total) > TOLERANCIA_TOTAL
+      ) {
         avisos.push(
           `La suma de las líneas (${suma.toFixed(2)}) no coincide con el total del XML (${doc.totales.total.toFixed(2)}): puede haber descuentos globales, anticipos u otros tributos. Se registrará la suma de las líneas`,
         );
@@ -235,6 +268,9 @@ export class ImportacionService {
       void _omitir;
       salida.push({
         nombre: l.nombre,
+        indice: l.indice,
+        origen: l.origen,
+        conDetalle: doc.lineas.length > 0,
         valido: errores.length === 0,
         errores,
         avisos,
@@ -272,7 +308,7 @@ export class ImportacionService {
     const lecturas = dto.archivos.map((a, i) => ({
       archivo: a,
       i,
-      lectura: this.leer(a, ruc),
+      lectura: this.leerArchivo(a, ruc)[0],
     }));
     const esNota = (x: (typeof lecturas)[number]) =>
       'doc' in x.lectura &&
@@ -294,13 +330,18 @@ export class ImportacionService {
         continue;
       }
       try {
-        const r = await this.registrarUno(
+        const r = await this.registrarDoc(
           personaId,
-          archivo,
           lectura.doc,
           lectura.operacion,
-          dto.idAlmacen,
           catalogo,
+          {
+            tipoCambio: archivo.tipoCambio ?? lectura.tipoCambio ?? undefined,
+            idAlmacen: dto.idAlmacen,
+            resoluciones: archivo.lineas,
+            lineasManuales: [],
+            sinDetalle: false,
+          },
         );
         resultados[i] = {
           nombre: archivo.nombre,
@@ -320,18 +361,59 @@ export class ImportacionService {
     return resultados;
   }
 
-  private async registrarUno(
+  /**
+   * Registra un comprobante de la cola (un XML o una fila del TXT). El
+   * archivo se vuelve a leer en el servidor: no se confía en lo que muestra
+   * la pantalla.
+   */
+  async registrarItem(
     personaId: number,
-    archivo: ArchivoARegistrarDto,
+    dto: RegistrarItemDto,
+  ): Promise<ResultadoRegistro> {
+    const ruc = await this.rucEmpresa(personaId);
+    if (dto.idAlmacen) await this.validarAlmacen(personaId, dto.idAlmacen);
+    const lectura = this.leerArchivo(dto.archivo, ruc).find(
+      (l) => l.indice === (dto.indice ?? 0),
+    );
+    if (!lectura) {
+      throw new BadRequestException(
+        'No se encontró ese comprobante en el archivo',
+      );
+    }
+    if (!('doc' in lectura)) throw new BadRequestException(lectura.error);
+    const r = await this.registrarDoc(
+      personaId,
+      lectura.doc,
+      lectura.operacion,
+      await this.catalogo(),
+      {
+        tipoCambio: dto.tipoCambio ?? lectura.tipoCambio ?? undefined,
+        idAlmacen: dto.idAlmacen,
+        resoluciones: dto.lineas ?? [],
+        lineasManuales: dto.lineasManuales ?? [],
+        sinDetalle: dto.sinDetalle ?? false,
+      },
+    );
+    return {
+      nombre: dto.archivo.nombre,
+      ok: true,
+      serieNumero: serieNumero(lectura.doc),
+      ...r,
+    };
+  }
+
+  private async registrarDoc(
+    personaId: number,
     doc: CpeDocumento,
     operacion: Operacion,
-    idAlmacen: number | undefined,
     catalogo: Awaited<ReturnType<ImportacionService['catalogo']>>,
+    op: OpcionesRegistro,
   ) {
+    const { idAlmacen } = op;
     if (doc.moneda !== 'PEN' && doc.moneda !== 'USD') {
       throw new BadRequestException(`Moneda no soportada: ${doc.moneda}`);
     }
-    let tipoCambio = archivo.tipoCambio;
+    let tipoCambio = op.tipoCambio;
     if (doc.moneda === 'USD' && !tipoCambio) {
       tipoCambio = (await this.tipoCambioDe(doc.fechaEmision)) ?? undefined;
       if (!tipoCambio) {
@@ -342,14 +424,16 @@ export class ImportacionService {
     }
 
     // Cada línea del XML debe tener su resolución
-    const porOrden = new Map(archivo.lineas.map((r) => [r.orden, r]));
-    const faltan = doc.lineas.filter((l) => !porOrden.has(l.orden));
+    const porOrden = new Map(op.resoluciones.map((r) => [r.orden, r]));
+    const faltan = op.sinDetalle
+      ? []
+      : doc.lineas.filter((l) => !porOrden.has(l.orden));
     if (faltan.length) {
       throw new BadRequestException(
         `Falta decidir qué es la línea ${faltan.map((l) => l.orden).join(', ')}`,
       );
     }
-    for (const l of doc.lineas) {
+    for (const l of op.sinDetalle ? [] : doc.lineas) {
       const r = porOrden.get(l.orden)!;
       if (r.tipo === 'producto' && !r.idProducto && !r.nuevoProducto) {
         throw new BadRequestException(
@@ -362,7 +446,16 @@ export class ImportacionService {
         );
       }
     }
-    const hayProductos = archivo.lineas.some((r) => r.tipo === 'producto');
+    if (!op.sinDetalle && !doc.lineas.length && !op.lineasManuales.length) {
+      throw new BadRequestException(
+        'Agrega el detalle del comprobante o regístralo sin detalle',
+      );
+    }
+    const hayProductos =
+      !op.sinDetalle &&
+      [...op.resoluciones, ...op.lineasManuales].some(
+        (r) => r.tipo === 'producto',
+      );
     if (hayProductos && !idAlmacen) {
       throw new BadRequestException(
         'Elige el almacén de la carga: hay líneas de producto',
@@ -389,7 +482,8 @@ export class ImportacionService {
 
     // Líneas: producto (con su inventario en el almacén) o servicio
     const detalles: CreateComprobanteDetalleDto[] = [];
-    for (const l of doc.lineas) {
+    const lineasXml = op.sinDetalle ? [] : doc.lineas;
+    for (const l of lineasXml) {
       const r = porOrden.get(l.orden)!;
       const montos = importes(l);
       if (r.tipo === 'servicio') {
@@ -401,6 +495,7 @@ export class ImportacionService {
           unidadMedida: l.unidad.slice(0, 10),
           precioUnitario: montos.subtotal / l.cantidad,
           ...montos,
+          afectacionIgv: l.afectacionIgv ?? undefined,
           descripcion: l.descripcion.slice(0, 255),
         });
         continue;
@@ -419,9 +514,20 @@ export class ImportacionService {
         ),
         precioUnitario: montos.subtotal / cantidad,
         ...montos,
+        afectacionIgv: l.afectacionIgv ?? undefined,
         descripcion: l.descripcion.slice(0, 255),
       });
       r.idProducto = producto.id;
+    }
+    if (!op.sinDetalle && !doc.lineas.length) {
+      detalles.push(
+        ...(await this.detallesManuales(
+          personaId,
+          doc,
+          op.lineasManuales,
+          idAlmacen,
+        )),
+      );
     }
 
     const comprobante: CreateComprobanteDto = {
@@ -436,16 +542,109 @@ export class ImportacionService {
       numero: doc.numero.slice(0, 20),
       detalles,
       idComprobanteAfecto,
+      ...(op.sinDetalle && {
+        total: doc.totales.total,
+        desglose: {
+          gravada: doc.totales.gravada,
+          exonerada: doc.totales.exonerada,
+          inafecta: doc.totales.inafecta,
+          igv: doc.totales.igv,
+          isc: doc.totales.isc,
+        },
+      }),
     };
     const guardado = await this.comprobantes.register(comprobante, personaId);
 
     // Se recuerda lo decidido solo si el comprobante quedó registrado
-    await this.recordar(personaId, doc, archivo.lineas);
+    if (!op.sinDetalle) await this.recordar(personaId, doc, op.resoluciones);
 
     return {
       idComprobante: guardado.idComprobante,
       correlativo: guardado.correlativo,
     };
+  }
+
+  /**
+   * Detalle escrito por el usuario para un comprobante del TXT. Las bases
+   * por afectación deben cuadrar con las del registro; el IGV se calcula por
+   * línea y la diferencia de redondeo va a la última línea gravada.
+   */
+  private async detallesManuales(
+    personaId: number,
+    doc: CpeDocumento,
+    lineas: LineaManualDto[],
+    idAlmacen: number | undefined,
+  ): Promise<CreateComprobanteDetalleDto[]> {
+    const t = doc.totales;
+    const suma = (g: 'G' | 'E' | 'I') =>
+      r2(
+        lineas
+          .filter((l) => grupoAfectacion(l.afectacionIgv) === g)
+          .reduce((s, l) => s + l.valor, 0),
+      );
+    const cuadres: [string, number, number][] = [
+      ['gravada', suma('G'), t.gravada],
+      ['exonerada', suma('E'), t.exonerada],
+      ['inafecta', suma('I'), t.inafecta],
+    ];
+    for (const [nombre, tiene, debe] of cuadres) {
+      if (Math.abs(tiene - debe) > TOLERANCIA_TOTAL) {
+        throw new BadRequestException(
+          `La base ${nombre} de las líneas (${tiene.toFixed(2)}) no cuadra con la del registro (${debe.toFixed(2)})`,
+        );
+      }
+    }
+
+    const detalles: CreateComprobanteDetalleDto[] = [];
+    for (const l of lineas) {
+      const gravada = grupoAfectacion(l.afectacionIgv) === 'G';
+      const base = {
+        cantidad: l.cantidad,
+        precioUnitario: l.valor / l.cantidad,
+        subtotal: r2(l.valor),
+        igv: gravada ? r2(l.valor * 0.18) : 0,
+        isc: 0,
+        total: 0,
+        afectacionIgv: l.afectacionIgv,
+      };
+      if (l.tipo === 'servicio') {
+        detalles.push({
+          ...base,
+          tipoLinea: 'servicio',
+          codigoCuenta: l.codigoCuenta,
+          idArea: l.idArea,
+          unidadMedida: 'ZZ',
+          descripcion: (l.descripcion || 'Servicio').slice(0, 255),
+        });
+        continue;
+      }
+      const producto = await this.productoPara(personaId, l);
+      detalles.push({
+        ...base,
+        tipoLinea: 'producto',
+        idInventario: await this.inventarioPara(idAlmacen!, producto.id),
+        unidadMedida: producto.unidadMedida.slice(0, 10),
+        descripcion: (l.descripcion || producto.nombre).slice(0, 255),
+      });
+    }
+
+    // IGV e ISC del registro: el redondeo por línea se ajusta en la última gravada
+    const ultima = [...detalles]
+      .reverse()
+      .find((d) => grupoAfectacion(d.afectacionIgv) === 'G');
+    const igvLineas = r2(detalles.reduce((s, d) => s + d.igv, 0));
+    const diferencia = r2(t.igv - igvLineas);
+    if (diferencia !== 0) {
+      if (!ultima || Math.abs(diferencia) > 0.01 * detalles.length + 0.02) {
+        throw new BadRequestException(
+          `El IGV de las líneas (${igvLineas.toFixed(2)}) no cuadra con el del registro (${t.igv.toFixed(2)})`,
+        );
+      }
+      ultima.igv = r2(ultima.igv + diferencia);
+    }
+    if (t.isc > 0) (ultima ?? detalles[0]).isc = t.isc;
+    for (const d of detalles) d.total = r2(d.subtotal + d.igv + d.isc);
+    return detalles;
   }
 
   // ───────────────────────── Equivalencias ─────────────────────────
@@ -573,31 +772,75 @@ export class ImportacionService {
 
   // ───────────────────────── Apoyo ─────────────────────────
 
-  private leer(a: ArchivoXmlDto, ruc: string): Lectura {
+  /** Un XML es un comprobante; un TXT de SIRE trae uno por fila */
+  private leerArchivo(a: ArchivoXmlDto, ruc: string): Lectura[] {
+    const buffer = Buffer.from(a.contenido, 'base64');
+    const inicio = buffer.subarray(0, 200).toString('latin1').trimStart();
+    const esXml = inicio.startsWith('<') || /\.xml$/i.test(a.nombre);
+    if (esXml) return [this.leerXml(a.nombre, buffer, ruc)];
+
+    let sire: ReturnType<typeof leerSire>;
+    try {
+      sire = leerSire(buffer);
+    } catch (e) {
+      return [
+        {
+          nombre: a.nombre,
+          indice: 0,
+          origen: 'txt',
+          error:
+            e instanceof SireError ? e.message : 'No se pudo leer el archivo',
+        },
+      ];
+    }
+    const operacion: Operacion = sire.libro === 'ventas' ? 'venta' : 'compra';
+    return sire.filas.map((f): Lectura => {
+      const base = { nombre: a.nombre, indice: f.fila, origen: 'txt' as const };
+      if (!f.ok) return { ...base, error: `Fila ${f.fila}: ${f.error}` };
+      const { documento, rucTitular, tipoCambio, avisos } = f.datos;
+      if (rucTitular !== ruc) {
+        return {
+          ...base,
+          error: `Fila ${f.fila}: el registro es del RUC ${rucTitular}, no de tu empresa (${ruc})`,
+        };
+      }
+      return { ...base, doc: documento, operacion, tipoCambio, avisos };
+    });
+  }
+
+  private leerXml(nombre: string, buffer: Buffer, ruc: string): Lectura {
+    const base = { nombre, indice: 0, origen: 'xml' as const };
     let doc: CpeDocumento;
     try {
-      doc = leerCpe(Buffer.from(a.contenido, 'base64'));
+      doc = leerCpe(buffer);
     } catch (e) {
       return {
-        nombre: a.nombre,
+        ...base,
         error: e instanceof CpeError ? e.message : 'No se pudo leer el XML',
       };
     }
+    const datos = { doc, tipoCambio: null, avisos: [] };
     if (doc.emisor.numeroDocumento === ruc) {
-      return { nombre: a.nombre, doc, operacion: 'venta' };
+      return { ...base, ...datos, operacion: 'venta' };
     }
     if (doc.receptor.numeroDocumento === ruc) {
-      return { nombre: a.nombre, doc, operacion: 'compra' };
+      return { ...base, ...datos, operacion: 'compra' };
     }
     return {
-      nombre: a.nombre,
+      ...base,
       error: `${NOMBRE_TIPO[doc.tipoComprobante]} ${serieNumero(doc)}: no es de tu empresa (RUC ${ruc}). Emisor ${doc.emisor.numeroDocumento}, receptor ${doc.receptor.numeroDocumento}`,
     };
   }
 
-  private archivoConError(nombre: string, error: string): ArchivoPrevio {
+  private archivoConError(
+    l: Pick<Lectura, 'nombre' | 'indice' | 'origen'>,
+    error: string,
+  ): ArchivoPrevio {
     return {
-      nombre,
+      nombre: l.nombre,
+      indice: l.indice,
+      origen: l.origen,
+      conDetalle: false,
       valido: false,
       errores: [error],
       avisos: [],
@@ -824,7 +1067,7 @@ export class ImportacionService {
    */
   private async productoPara(
     personaId: number,
-    r: ResolucionLineaDto,
+    r: Pick<ResolucionLineaDto, 'idProducto' | 'nuevoProducto'>,
   ): Promise<Producto> {
     const repo = this.dataSource.getRepository(Producto);
     if (r.idProducto) {

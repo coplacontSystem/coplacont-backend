@@ -28,7 +28,7 @@ export class ArchivoXmlDto {
   @MaxLength(255)
   nombre: string;
 
-  @ApiProperty({ description: 'Contenido del XML en base64' })
+  @ApiProperty({ description: 'Contenido del XML o TXT en base64' })
   @IsString()
   @MinLength(1)
   contenido: string;
@@ -135,6 +135,112 @@ export class ArchivoARegistrarDto extends ArchivoXmlDto {
   lineas: ResolucionLineaDto[];
 }
 
+/** Línea escrita a mano para un comprobante que no trae detalle (TXT) */
+export class LineaManualDto {
+  @ApiProperty({ enum: ['producto', 'servicio'] })
+  @IsIn(['producto', 'servicio'])
+  tipo: 'producto' | 'servicio';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  idProducto?: number;
+
+  @ApiPropertyOptional({ type: NuevoProductoDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NuevoProductoDto)
+  nuevoProducto?: NuevoProductoDto;
+
+  @ApiPropertyOptional({ example: '6361' })
+  @IsOptional()
+  @Matches(/^\d{2,10}$/, { message: 'Código de cuenta inválido' })
+  codigoCuenta?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  idArea?: number;
+
+  @ApiPropertyOptional({ example: 'Venta de mercadería' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  descripcion?: string;
+
+  @ApiProperty({ example: 1 })
+  @IsNumber()
+  @IsPositive()
+  cantidad: number;
+
+  @ApiProperty({ example: 254.24, description: 'Importe sin IGV' })
+  @IsNumber()
+  @Min(0)
+  valor: number;
+
+  @ApiProperty({
+    enum: ['10', '20', '30'],
+    description: 'Gravado, exonerado o inafecto',
+  })
+  @IsIn(['10', '20', '30'])
+  afectacionIgv: '10' | '20' | '30';
+}
+
+/** Un comprobante de la cola: un XML o una fila de un TXT de SIRE */
+export class RegistrarItemDto {
+  @ApiProperty({ type: ArchivoXmlDto })
+  @ValidateNested()
+  @Type(() => ArchivoXmlDto)
+  archivo: ArchivoXmlDto;
+
+  @ApiPropertyOptional({ description: 'Fila del TXT (0 o vacío en un XML)' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  indice?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  idAlmacen?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
+  tipoCambio?: number;
+
+  @ApiPropertyOptional({
+    type: [ResolucionLineaDto],
+    description: 'Líneas del XML',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ResolucionLineaDto)
+  lineas?: ResolucionLineaDto[];
+
+  @ApiPropertyOptional({
+    type: [LineaManualDto],
+    description: 'Detalle del TXT',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => LineaManualDto)
+  lineasManuales?: LineaManualDto[];
+
+  @ApiPropertyOptional({
+    description: 'Registrar solo con los totales (sin inventario)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  sinDetalle?: boolean;
+}
+
 export class RegistrarDto {
   @ApiPropertyOptional({
     description: 'Almacén de la carga (obligatorio si hay líneas de producto)',
@@ -182,8 +288,15 @@ export interface LineaPrevia extends CpeLinea {
   sugerencia: Sugerencia | null;
 }
 
+export type OrigenArchivo = 'xml' | 'txt';
+
 export interface ArchivoPrevio {
   nombre: string;
+  /** Fila del TXT; 0 en un XML. Con el nombre identifica el comprobante */
+  indice: number;
+  origen: OrigenArchivo;
+  /** El archivo trae el detalle (XML); si no, se escribe o se registra sin él */
+  conDetalle: boolean;
   /** Sin errores: se puede registrar una vez resueltas sus líneas */
   valido: boolean;
   errores: string[];

@@ -72,4 +72,16 @@ export class ComprobanteDetalle {
 
   @Column({ length: 255 })
   descripcion: string;
+
+  /**
+   * Afectación del IGV (catálogo 07 de SUNAT): 1x gravado, 2x exonerado,
+   * 3x inafecto, 40 exportación. Sin dato se considera gravado.
+   */
+  @Column({
+    name: 'afectacion_igv',
+    type: 'varchar',
+    length: 2,
+    nullable: true,
+  })
+  afectacionIgv: string | null;
 }

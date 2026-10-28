@@ -315,6 +315,7 @@ export class ComprobanteService implements OnModuleInit {
         guardado.idComprobante,
         Number(dto.total ?? 0),
         manager,
+        dto.desglose,
       );
       return guardado.idComprobante;
     }

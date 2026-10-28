@@ -15,7 +15,11 @@ import { JwtAuthGuard } from '../users/guards/jwt-auth.guard';
 import { CurrentUser } from '../users/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../users/decorators/current-user.decorator';
 import { ImportacionService } from './importacion.service';
-import { PrevisualizarDto, RegistrarDto } from './importacion.types';
+import {
+  PrevisualizarDto,
+  RegistrarDto,
+  RegistrarItemDto,
+} from './importacion.types';
 
 @ApiTags('Importación de comprobantes (XML)')
 @ApiBearerAuth()
@@ -28,7 +32,7 @@ export class ImportacionController {
   @HttpCode(200)
   @ApiOperation({
     summary:
-      'Lee los XML y dice qué se registrará: compra o venta, errores, avisos y productos sugeridos',
+      'Lee los XML o TXT de SIRE y dice qué se registrará: compra o venta, errores, avisos y productos sugeridos',
   })
   previsualizar(
     @CurrentUser() user: AuthenticatedUser,
@@ -45,6 +49,19 @@ export class ImportacionController {
   })
   registrar(@CurrentUser() user: AuthenticatedUser, @Body() dto: RegistrarDto) {
     return this.importacion.registrar(empresaDe(user), dto);
+  }
+
+  @Post('registrar-uno')
+  @HttpCode(200)
+  @ApiOperation({
+    summary:
+      'Registra un comprobante de la cola (XML o fila de TXT) con su detalle o sin él',
+  })
+  registrarUno(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: RegistrarItemDto,
+  ) {
+    return this.importacion.registrarItem(empresaDe(user), dto);
   }
 
   @Get('equivalencias')

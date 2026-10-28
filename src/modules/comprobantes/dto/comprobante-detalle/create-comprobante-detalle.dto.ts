@@ -50,6 +50,15 @@ export class CreateComprobanteDetalleDto {
   @Min(1)
   idArea?: number;
 
+  @ApiPropertyOptional({
+    description:
+      'Afectación del IGV (catálogo 07): 10 gravado, 20 exonerado, 30 inafecto, 40 exportación',
+    example: '10',
+  })
+  @IsOptional()
+  @Matches(/^\d{2}$/, { message: 'Afectación del IGV inválida' })
+  afectacionIgv?: string;
+
   @ApiProperty({
     description: 'Cantidad del producto o servicio',
     example: 10.5,

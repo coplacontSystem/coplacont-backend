@@ -49,6 +49,10 @@ export class ResponseComprobanteDetalleDto {
   )
   tipoLinea: 'producto' | 'servicio';
 
+  /** Afectación del IGV (catálogo 07); null en líneas antiguas (gravadas) */
+  @Expose()
+  afectacionIgv: string | null;
+
   /** Cuenta de gasto o ingreso de una línea de servicio */
   @Expose()
   @Transform(

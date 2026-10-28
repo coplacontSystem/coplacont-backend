@@ -71,6 +71,15 @@ export function validarImportes(detalles: CreateComprobanteDetalleDto[]): void {
         `${linea}: el IGV no puede superar el 18 % del subtotal (${igvMaximo.toFixed(2)})`,
       );
     }
+    if (
+      d.afectacionIgv &&
+      !d.afectacionIgv.startsWith('1') &&
+      Number(d.igv) > TOLERANCIA
+    ) {
+      throw new BadRequestException(
+        `${linea}: una línea exonerada, inafecta o de exportación no lleva IGV`,
+      );
+    }
     const total = redondear(
       Number(d.subtotal) + Number(d.igv ?? 0) + Number(d.isc ?? 0),
     );
