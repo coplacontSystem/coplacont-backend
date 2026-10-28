@@ -8,21 +8,10 @@ import { ReportesService } from 'src/modules/reportes/reportes.service';
 import { LibroDiarioService } from './libro-diario.service';
 import { PeriodoLibroDto } from './libro-diario.types';
 
-/** Grupo del formato 5.2 según el elemento de la cuenta */
-function grupo(codigo: string) {
-  const e = codigo[0];
-  if (e === '1' || e === '2' || e === '3') return 'Activo';
-  if (e === '4') return 'Pasivo';
-  if (e === '5') return 'Patrimonio';
-  if (e === '6') return 'Gastos';
-  if (e === '7') return 'Ingresos';
-  return 'Cuentas analíticas';
-}
-
 /**
  * Libro Diario de formato simplificado (formato 5.2 de SUNAT): una fila por
- * asiento y una columna por cuenta de 2 dígitos; el Debe va en positivo y el
- * Haber en negativo. En Excel lleva además la hoja de detalle por cuenta.
+ * asiento y, por cada cuenta de 2 dígitos, su Debe y su Haber. Lleva además
+ * la hoja de detalle por cuenta.
  * GET /api/reportes/libro-diario?año=2026&mes=5&formato=pdf|xlsx
  */
 @Injectable()
@@ -47,13 +36,30 @@ export class LibroDiarioReporte implements OnModuleInit {
   ): Promise<DocumentoTabular> {
     const libro = await this.libros.libro(personaId, año, mes);
 
-    const columnasCuenta: Columna[] = libro.cuentas.map((c) => ({
-      clave: `c${c.codigo}`,
-      titulo: `${c.codigo} ${c.nombre}`.trim(),
-      tipo: 'moneda',
-      grupo: grupo(c.codigo),
-      ancho: 13,
-    }));
+    // Debe y Haber por cuenta: así no se anulan dos cuentas del mismo grupo
+    const columnasCuenta: Columna[] = libro.cuentas.flatMap((c) => {
+      const titulo = `${c.codigo} ${c.nombre}`.trim();
+      return [
+        {
+          clave: `d${c.codigo}`,
+          titulo: 'Debe',
+          tipo: 'moneda' as const,
+          grupo: titulo,
+          ancho: 11,
+        },
+        {
+          clave: `h${c.codigo}`,
+          titulo: 'Haber',
+          tipo: 'moneda' as const,
+          grupo: titulo,
+          ancho: 11,
+        },
+      ];
+    });
+    const sumar = (fila: Fila, k: string, v: number) => {
+      if (!v) return;
+      fila[k] = Math.round(((Number(fila[k]) || 0) + v) * 100) / 100;
+    };
     const filas: Fila[] = libro.asientos.map((a) => {
       const fila: Fila = {
         numero: a.numero,
@@ -61,9 +67,9 @@ export class LibroDiarioReporte implements OnModuleInit {
         glosa: a.glosa,
       };
       for (const l of a.lineas) {
-        const k = `c${l.codigoCuenta.slice(0, 2)}`;
-        fila[k] =
-          Math.round(((Number(fila[k]) || 0) + l.debe - l.haber) * 100) / 100;
+        const c = l.codigoCuenta.slice(0, 2);
+        sumar(fila, `d${c}`, l.debe);
+        sumar(fila, `h${c}`, l.haber);
       }
       return fila;
     });
