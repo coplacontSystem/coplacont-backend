@@ -27,6 +27,10 @@ export class User {
   @Column({ default: true })
   habilitado: boolean;
 
+  /** Sube al cerrar todas las sesiones o cambiar la contraseña: invalida los tokens emitidos */
+  @Column({ name: 'version_token', default: 0 })
+  versionToken: number;
+
   @Column({ nullable: true })
   resetPasswordToken?: string;
 

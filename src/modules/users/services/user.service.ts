@@ -208,6 +208,18 @@ export class UserService {
       contrasena: hashedPassword,
       contrasenaActualizada: new Date(),
     });
+    // Una contraseña nueva cierra las sesiones abiertas con la anterior
+    await this.cerrarSesiones(userId);
+  }
+
+  /** Invalida todos los tokens emitidos al usuario. */
+  async cerrarSesiones(userId: number): Promise<void> {
+    await this.userRepository.increment({ id: userId }, 'versionToken', 1);
+  }
+
+  /** Roles vigentes del usuario (no los del token, que pueden estar desfasados). */
+  async rolesActuales(user: User) {
+    return this.userRoleRepository.findRolesByUser(user);
   }
 
   /** Registra el inicio de sesión para mostrarlo en Mi cuenta */

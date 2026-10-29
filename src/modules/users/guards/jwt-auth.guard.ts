@@ -35,6 +35,15 @@ export class JwtAuthGuard implements CanActivate {
       if (!user) {
         throw new UnauthorizedException('Usuario no encontrado');
       }
+      // Un usuario o empresa deshabilitados, o sesiones cerradas, dejan sin
+      // efecto los tokens ya emitidos
+      if (!user.habilitado || (user.persona && !user.persona.habilitado)) {
+        throw new UnauthorizedException('Usuario deshabilitado');
+      }
+      if ((payload.ver ?? 0) !== (user.versionToken ?? 0)) {
+        throw new UnauthorizedException('La sesión fue cerrada');
+      }
+      const roles = await this.userService.rolesActuales(user);
 
       // Agregar información del usuario al request
       request['user'] = {
@@ -43,7 +52,7 @@ export class JwtAuthGuard implements CanActivate {
         nombre: user.nombre,
         persona: user.persona,
         personaId: user.persona?.id || null,
-        roles: payload.roles,
+        roles,
         permissions: payload.permissions,
       };
 
