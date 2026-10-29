@@ -2,6 +2,7 @@ import { listar, Pagina, PaginacionDto } from 'src/common/paginacion';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Repository, DataSource, Not, In, EntityManager } from 'typeorm';
 import { Comprobante } from '../entities/comprobante';
+import { ComprobanteDetalle } from '../entities/comprobante-detalle';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateComprobanteDto } from '../dto/comprobante/create-comprobante.dto';
 import { EntidadService } from 'src/modules/entidades/services';
@@ -268,9 +269,23 @@ export class ComprobanteService implements OnModuleInit {
     if (dto.idComprobanteAfecto) {
       comprobanteAfecto = await manager.findOne(Comprobante, {
         where: { idComprobante: dto.idComprobanteAfecto },
-        relations: ['tipoOperacion'],
+        relations: [
+          'tipoOperacion',
+          'tipoComprobante',
+          'entidad',
+          'totales',
+          'detalles',
+          'detalles.inventario',
+        ],
       });
     }
+    await this.validarNota(
+      manager,
+      dto,
+      tipoOperacion.codigo,
+      tipoComprobante.codigo,
+      comprobanteAfecto,
+    );
 
     const detalles = this.existDetails(dto) ? dto.detalles! : [];
     // Solo las líneas de producto mueven inventario y kardex
@@ -492,6 +507,113 @@ export class ComprobanteService implements OnModuleInit {
           excludeExtraneousValues: true,
         }),
     );
+  }
+
+  /**
+   * Reglas de las notas de crédito (07) y débito (08): modifican un comprobante
+   * del mismo tipo de operación, contraparte y moneda, sin ser anteriores a él.
+   * Las de crédito, sumadas a las ya registradas, no pueden devolver más importe
+   * ni más unidades de las que tenía el comprobante.
+   */
+  private async validarNota(
+    manager: EntityManager,
+    dto: CreateComprobanteDto,
+    codigoOperacion: string,
+    codigoComprobante: string,
+    afectado: Comprobante | null,
+  ): Promise<void> {
+    const esCredito = codigoComprobante === COMPROBANTE.NOTA_CREDITO;
+    if (!esCredito && codigoComprobante !== COMPROBANTE.NOTA_DEBITO) return;
+    const nota = esCredito ? 'La nota de crédito' : 'La nota de débito';
+    if (!dto.idComprobanteAfecto) {
+      throw new BadRequestException(
+        `${nota} debe indicar el comprobante que modifica`,
+      );
+    }
+    if (!afectado) {
+      throw new BadRequestException(
+        'No existe el comprobante que modifica la nota',
+      );
+    }
+    const ref = `${afectado.serie}-${afectado.numero}`;
+    const notas: string[] = [COMPROBANTE.NOTA_CREDITO, COMPROBANTE.NOTA_DEBITO];
+    if (notas.includes(afectado.tipoComprobante.codigo)) {
+      throw new BadRequestException(
+        `${nota} no puede modificar otra nota (${ref})`,
+      );
+    }
+    if (afectado.tipoOperacion.codigo !== codigoOperacion) {
+      throw new BadRequestException(
+        `${nota} debe ser del mismo tipo de operación que ${ref} (compra o venta)`,
+      );
+    }
+    if (afectado.entidad && afectado.entidad.id !== dto.idPersona) {
+      throw new BadRequestException(
+        `${nota} debe ser de la misma contraparte que ${ref}`,
+      );
+    }
+    if (afectado.moneda !== dto.moneda) {
+      throw new BadRequestException(
+        `${nota} debe estar en la misma moneda que ${ref} (${afectado.moneda})`,
+      );
+    }
+    if (
+      ymdContable(fechaContable(dto.fechaEmision)) <
+      ymdContable(afectado.fechaEmision)
+    ) {
+      throw new BadRequestException(`${nota} no puede ser anterior a ${ref}`);
+    }
+    if (!esCredito) return;
+
+    const previas = await manager.find(Comprobante, {
+      where: {
+        comprobanteAfecto: { idComprobante: afectado.idComprobante },
+        tipoComprobante: { codigo: COMPROBANTE.NOTA_CREDITO },
+      },
+      relations: ['totales', 'detalles', 'detalles.inventario'],
+    });
+    const detalles = this.existDetails(dto) ? dto.detalles! : [];
+    const totalNota = detalles.length
+      ? detalles.reduce((s, d) => s + Number(d.total), 0)
+      : Number(dto.total ?? 0);
+    const acreditado = previas.reduce(
+      (s, c) => s + Number(c.totales?.totalGeneral ?? 0),
+      0,
+    );
+    const saldo = Number(afectado.totales?.totalGeneral ?? 0) - acreditado;
+    if (totalNota > saldo + 0.01) {
+      throw new BadRequestException(
+        `${nota} (${totalNota.toFixed(2)}) supera el saldo de ${ref} (${saldo.toFixed(2)})`,
+      );
+    }
+
+    // Por inventario, lo devuelto no puede pasar de lo comprado o vendido
+    const unidades = (ds: ComprobanteDetalle[]) => {
+      const m = new Map<number, number>();
+      for (const d of ds) {
+        if (!d.inventario) continue;
+        const id = Number(d.inventario.id); // bigint: llega como texto
+        m.set(id, (m.get(id) ?? 0) + Number(d.cantidad));
+      }
+      return m;
+    };
+    const original = unidades(afectado.detalles ?? []);
+    const devuelto = unidades(previas.flatMap((c) => c.detalles ?? []));
+    for (const d of detalles.filter((x) => !esServicio(x))) {
+      const id = Number(d.idInventario);
+      const maximo = original.get(id);
+      if (maximo == null) {
+        throw new BadRequestException(
+          `${nota} devuelve un producto que no está en ${ref}`,
+        );
+      }
+      devuelto.set(id, (devuelto.get(id) ?? 0) + Number(d.cantidad));
+      if (devuelto.get(id)! > maximo + 1e-6) {
+        throw new BadRequestException(
+          `${nota} devuelve más unidades de las que tiene ${ref} (${maximo})`,
+        );
+      }
+    }
   }
 
   existDetails(createComprobanteDto: CreateComprobanteDto): boolean {
