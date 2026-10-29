@@ -10,6 +10,7 @@ import { Moneda } from '../comprobantes/enum/tipo-moneda.enum';
 import type { CreateComprobanteDto } from '../comprobantes/dto/comprobante/create-comprobante.dto';
 import type { CreateComprobanteDetalleDto } from '../comprobantes/dto/comprobante-detalle/create-comprobante-detalle.dto';
 import { Entidad } from '../entidades/entities';
+import { ContribuyentesService } from '../contribuyentes/contribuyentes.service';
 import { EntidadType } from '../entidades/enums/EntidadType.enum';
 import { Producto } from '../productos/entities';
 import { ProductoService } from '../productos/service';
@@ -101,6 +102,7 @@ export class ImportacionService {
     private readonly tipoCambio: TipoCambioService,
     private readonly personas: PersonaService,
     private readonly catalogos: CatalogosService,
+    private readonly contribuyentes: ContribuyentesService,
   ) {}
 
   // ───────────────────────── Vista previa ─────────────────────────
@@ -129,6 +131,7 @@ export class ImportacionService {
       }
     }
     const vistos = new Set<string>();
+    const contrapartes = new Map<string, Promise<string[]>>();
 
     const salida: ArchivoPrevio[] = [];
     for (const l of lecturas) {
@@ -144,6 +147,9 @@ export class ImportacionService {
         personaId,
         parte.numeroDocumento,
       );
+      const n = parte.numeroDocumento;
+      if (!contrapartes.has(n)) contrapartes.set(n, this.avisosRuc(n));
+      avisos.push(...(await contrapartes.get(n)!));
 
       // Repetido en la carga o ya registrado
       const k = this.claveDocumento(doc, operacion, ruc);
@@ -983,6 +989,14 @@ export class ImportacionService {
         numeroDocumento: documento || CLIENTES_VARIOS,
       },
     });
+  }
+
+  /** Avisos del padrón de SUNAT para el RUC de la contraparte (no habido, de baja…) */
+  private async avisosRuc(numero: string): Promise<string[]> {
+    if (!/^\d{11}$/.test(numero)) return [];
+    const c = await this.contribuyentes.consultarSinFallar(numero);
+    if (!c) return [`El RUC ${numero} no es válido (dígito verificador)`];
+    return c.fuente === 'sin-servicio' ? [] : c.avisos;
   }
 
   /** La contraparte del comprobante; si no existe se crea con el rol que toca */

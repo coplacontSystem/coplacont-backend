@@ -6,6 +6,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { ContabilidadModule } from './modules/contabilidad/contabilidad.module';
 import { ImportacionModule } from './modules/importacion/importacion.module';
 import { CatalogosModule } from './modules/catalogos/catalogos.module';
+import { ContribuyentesModule } from './modules/contribuyentes/contribuyentes.module';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -62,6 +63,7 @@ import { UserRole } from './modules/users/entities/user-role.entity';
     ContabilidadModule,
     ImportacionModule,
     CatalogosModule,
+    ContribuyentesModule,
   ],
   controllers: [AppController, ComprobanteController],
   providers: [AppService, DatabaseSeedService],
