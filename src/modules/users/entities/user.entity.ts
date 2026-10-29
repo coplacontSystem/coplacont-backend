@@ -1,5 +1,6 @@
 import {
   Column,
+  CreateDateColumn,
   Entity,
   JoinColumn,
   ManyToOne,
@@ -25,6 +26,10 @@ export class User {
 
   @Column({ default: true })
   habilitado: boolean;
+
+  /** Sube al cerrar todas las sesiones o cambiar la contraseña: invalida los tokens emitidos */
+  @Column({ name: 'version_token', default: 0 })
+  versionToken: number;
 
   @Column({ nullable: true })
   resetPasswordToken?: string;
@@ -60,6 +65,9 @@ export class User {
     nullable: true,
   })
   ultimoAgente: string | null;
+
+  @CreateDateColumn({ name: 'fecha_creacion', type: 'timestamptz' })
+  fechaCreacion: Date;
 
   @Column({
     name: 'contrasena_actualizada',

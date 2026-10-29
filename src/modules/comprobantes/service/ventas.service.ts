@@ -42,6 +42,8 @@ export class VentasService {
           'totales',
           'persona',
           'detalles',
+          'detalles.cuentaContable',
+          'detalles.area',
           'entidad',
           'tipoOperacion',
           'tipoComprobante',
@@ -87,6 +89,8 @@ export class VentasService {
         'totales',
         'persona',
         'detalles',
+        'detalles.cuentaContable',
+        'detalles.area',
         'detalles.producto',
         'entidad',
         'tipoOperacion',
@@ -132,6 +136,8 @@ export class VentasService {
       .leftJoinAndSelect('comprobante.persona', 'persona')
       .leftJoinAndSelect('comprobante.entidad', 'entidad')
       .leftJoinAndSelect('comprobante.detalles', 'detalles')
+      .leftJoinAndSelect('detalles.cuentaContable', 'cuentaContable')
+      .leftJoinAndSelect('detalles.area', 'area')
       .leftJoinAndSelect('comprobante.tipoOperacion', 'tipoOperacion')
       .leftJoinAndSelect('comprobante.tipoComprobante', 'tipoComprobante')
       .where('comprobante.tipoOperacion.idTablaDetalle = :tipoId', {
@@ -175,6 +181,8 @@ export class VentasService {
       .leftJoinAndSelect('comprobante.persona', 'persona')
       .leftJoinAndSelect('comprobante.entidad', 'entidad')
       .leftJoinAndSelect('comprobante.detalles', 'detalles')
+      .leftJoinAndSelect('detalles.cuentaContable', 'cuentaContable')
+      .leftJoinAndSelect('detalles.area', 'area')
       .leftJoinAndSelect('comprobante.tipoOperacion', 'tipoOperacion')
       .leftJoinAndSelect('comprobante.tipoComprobante', 'tipoComprobante')
       .where('comprobante.tipoOperacion.idTablaDetalle = :tipoId', {

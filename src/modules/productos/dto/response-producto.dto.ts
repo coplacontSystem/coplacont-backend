@@ -103,6 +103,24 @@ export class ResponseProductoDto {
   @Expose()
   estado: boolean;
 
+  @ApiProperty({
+    description: 'Código de producto SUNAT (CCNU)',
+    nullable: true,
+  })
+  @Expose()
+  codigoSunat: string | null;
+
+  @ApiProperty({ description: 'Tipo de existencia (Tabla 5)', nullable: true })
+  @Expose()
+  tipoExistencia: string | null;
+
+  @ApiProperty({
+    description: 'Unidad de medida SUNAT (Tabla 6)',
+    nullable: true,
+  })
+  @Expose()
+  codigoUnidad: string | null;
+
   /**
    * Categoría del producto
    */

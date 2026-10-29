@@ -5,6 +5,21 @@ import { Repository, EntityManager } from 'typeorm';
 import { ComprobanteDetalle } from '../entities/comprobante-detalle';
 import { Comprobante } from '../entities/comprobante';
 
+export interface DesgloseTotales {
+  gravada?: number;
+  exonerada?: number;
+  inafecta?: number;
+  igv?: number;
+  isc?: number;
+}
+
+/** G gravada, E exonerada, I inafecta o exportación (catálogo 07) */
+export function grupoAfectacion(codigo?: string | null): 'G' | 'E' | 'I' {
+  if (codigo?.startsWith('2')) return 'E';
+  if (codigo?.startsWith('3') || codigo === '40') return 'I';
+  return 'G';
+}
+
 @Injectable()
 export class ComprobanteTotalesService {
   constructor(
@@ -25,16 +40,18 @@ export class ComprobanteTotalesService {
     comprobante.idComprobante = idComprobante;
 
     // Calcular totales
-    const totalGravada = detalles.reduce(
-      (sum, d) => sum + Number(d.subtotal),
-      0,
-    );
+    // Base por afectación del IGV (sin dato: gravada, como antes)
+    const base = (grupo: 'G' | 'E' | 'I') =>
+      detalles
+        .filter((d) => grupoAfectacion(d.afectacionIgv) === grupo)
+        .reduce((sum, d) => sum + Number(d.subtotal), 0);
+    const totalGravada = base('G');
     const totalIgv = detalles.reduce((sum, d) => sum + Number(d.igv ?? 0), 0);
     const totalIsc = detalles.reduce((sum, d) => sum + Number(d.isc ?? 0), 0);
     const totalGeneral = detalles.reduce((sum, d) => sum + Number(d.total), 0);
 
-    const totalExonerada = 0;
-    const totalInafecta = 0;
+    const totalExonerada = base('E');
+    const totalInafecta = base('I');
 
     // Usar el repositorio apropiado según si hay EntityManager
     const totalesRepo = manager
@@ -67,6 +84,7 @@ export class ComprobanteTotalesService {
     idComprobante: number,
     totalGeneral: number,
     manager?: EntityManager,
+    desglose?: DesgloseTotales,
   ) {
     const comprobante = new Comprobante();
     comprobante.idComprobante = idComprobante;
@@ -77,11 +95,11 @@ export class ComprobanteTotalesService {
 
     const totales = totalesRepo.create({
       comprobante,
-      totalGravada: 0,
-      totalExonerada: 0,
-      totalInafecta: 0,
-      totalIgv: 0,
-      totalIsc: 0,
+      totalGravada: desglose?.gravada ?? 0,
+      totalExonerada: desglose?.exonerada ?? 0,
+      totalInafecta: desglose?.inafecta ?? 0,
+      totalIgv: desglose?.igv ?? 0,
+      totalIsc: desglose?.isc ?? 0,
       totalGeneral: Number(totalGeneral ?? 0),
     });
 

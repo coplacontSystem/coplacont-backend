@@ -9,7 +9,14 @@ import {
   MinLength,
   Min,
   IsEnum,
+  Matches,
+  IsIn,
+  ValidateIf,
 } from 'class-validator';
+import {
+  CODIGOS_EXISTENCIA,
+  CODIGOS_UNIDAD,
+} from 'src/modules/catalogos/tablas-sunat';
 import { Type } from 'class-transformer';
 import { TipoProducto } from '../enum/tipo-producto.enum';
 
@@ -75,10 +82,13 @@ export class CreateProductoDto {
    * Unidad de medida del producto
    */
   @ApiProperty({
-    description: 'Unidad de medida del producto',
+    description:
+      'Unidad de medida del producto (con codigoUnidad se toma de la Tabla 6)',
     example: 'unidad',
     maxLength: 50,
   })
+  // Con la unidad SUNAT basta: el texto visible se completa solo
+  @ValidateIf((o: { codigoUnidad?: string | null }) => !o.codigoUnidad)
   @IsString()
   @MaxLength(50, {
     message: 'La unidad de medida no puede exceder 50 caracteres',
@@ -143,4 +153,31 @@ export class CreateProductoDto {
   @IsOptional()
   @IsBoolean()
   estado?: boolean;
+
+  @ApiProperty({
+    description: 'Código de producto SUNAT (catálogo CCNU, 8 dígitos)',
+    example: '50131700',
+    required: false,
+  })
+  @IsOptional()
+  @Matches(/^\d{8}$/, { message: 'El código SUNAT tiene 8 dígitos' })
+  codigoSunat?: string | null;
+
+  @ApiProperty({
+    description: 'Tipo de existencia (Tabla 5 SUNAT)',
+    example: '01',
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(CODIGOS_EXISTENCIA, { message: 'Tipo de existencia inválido' })
+  tipoExistencia?: string | null;
+
+  @ApiProperty({
+    description: 'Unidad de medida SUNAT (Tabla 6, UN/ECE)',
+    example: 'NIU',
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(CODIGOS_UNIDAD, { message: 'Unidad de medida SUNAT inválida' })
+  codigoUnidad?: string | null;
 }

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { UserService } from './user.service';
 import * as bcrypt from 'bcrypt';
 import { User } from '../entities/user.entity';
@@ -13,6 +13,18 @@ import { Payload } from '../dto/auth/payload';
 import { AuthResponseDto } from '../dto/auth/auth-response.dto';
 import { EmailService } from './email.service';
 import { randomBytes } from 'crypto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { MoreThan, Repository } from 'typeorm';
+import { RegistroAcceso } from '../entities/registro-acceso.entity';
+
+/** Intentos fallidos por correo antes de bloquear temporalmente el acceso. */
+export const MAX_FALLIDOS = 5;
+export const MINUTOS_BLOQUEO = 15;
+
+export interface ContextoAcceso {
+  ip?: string;
+  agente?: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -22,6 +34,8 @@ export class AuthService {
     private readonly rolePermissionService: RolePermissionService,
     private readonly jwtService: JwtService,
     private readonly emailService: EmailService,
+    @InjectRepository(RegistroAcceso)
+    private readonly accesos: Repository<RegistroAcceso>,
   ) {}
 
   /**
@@ -61,18 +75,47 @@ export class AuthService {
    */
   async login(
     authLoginDto: AuthLoginDto,
-    agente?: string,
+    contexto: ContextoAcceso = {},
   ): Promise<AuthResponseDto> {
+    const email = authLoginDto.email.trim().toLowerCase();
+    const registrar = (exito: boolean, motivo: string | null, id?: number) =>
+      this.accesos.save({
+        email,
+        idUsuario: id ?? null,
+        exito,
+        motivo,
+        ip: contexto.ip?.slice(0, 64) ?? null,
+        agente: contexto.agente?.slice(0, 300) ?? null,
+      });
+
+    const desde = new Date(Date.now() - MINUTOS_BLOQUEO * 60_000);
+    const recientes = await this.accesos.find({
+      where: { email, fecha: MoreThan(desde) },
+      order: { fecha: 'DESC' },
+      take: MAX_FALLIDOS,
+    });
+    const bloqueado =
+      recientes.length === MAX_FALLIDOS && recientes.every((a) => !a.exito);
+    if (bloqueado) {
+      await registrar(false, 'bloqueado');
+      throw new HttpException(
+        `Demasiados intentos fallidos. Intenta de nuevo en ${MINUTOS_BLOQUEO} minutos o restablece tu contraseña.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
     const user = await this.validateUser(
       authLoginDto.email,
       authLoginDto.contrasena,
     );
 
     if (!user) {
+      await registrar(false, 'credenciales');
       return this.buildAuthResponse('Credenciales inválidas', false);
     }
 
-    await this.usersService.registrarLogin(user.id, agente);
+    await registrar(true, null, user.id);
+    await this.usersService.registrarLogin(user.id, contexto.agente);
     const roles = await this.userRoleService.findRolesByUser(user);
     const permissions =
       await this.rolePermissionService.findPermissionsByRoles(roles);
@@ -210,6 +253,7 @@ export class AuthService {
       email: user.email,
       roles,
       permissions,
+      ver: user.versionToken ?? 0,
     };
   }
 

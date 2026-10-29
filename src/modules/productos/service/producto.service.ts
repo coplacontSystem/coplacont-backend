@@ -8,6 +8,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { plainToClass } from 'class-transformer';
 import { Producto } from '../entities/producto.entity';
+import { CatalogosService } from 'src/modules/catalogos/catalogos.service';
+import { UNIDADES } from 'src/modules/catalogos/tablas-sunat';
 import { Categoria } from 'src/modules/categoria/entities';
 import {
   CreateProductoDto,
@@ -28,7 +30,21 @@ export class ProductoService {
     private readonly productoRepository: Repository<Producto>,
     @InjectRepository(Categoria)
     private readonly categoriaRepository: Repository<Categoria>,
+    private readonly catalogos: CatalogosService,
   ) {}
+
+  /** Valida el código SUNAT y completa la unidad visible desde la de SUNAT */
+  private async datosSunat(dto: {
+    codigoSunat?: string | null;
+    codigoUnidad?: string | null;
+    unidadMedida?: string;
+  }) {
+    if (dto.codigoSunat) await this.catalogos.validarCcnu(dto.codigoSunat);
+    if (dto.codigoUnidad && !dto.unidadMedida) {
+      const u = UNIDADES.find((x) => x.codigo === dto.codigoUnidad);
+      if (u) dto.unidadMedida = u.corto;
+    }
+  }
 
   /**
    * Crear un nuevo producto
@@ -40,6 +56,8 @@ export class ProductoService {
     createProductoDto: CreateProductoDto,
     personaId: number,
   ): Promise<ResponseProductoDto> {
+    await this.datosSunat(createProductoDto);
+
     // Verificar que la categoría existe, está activa y pertenece a la misma empresa
     const categoria = await this.categoriaRepository.findOne({
       where: {
@@ -185,6 +203,8 @@ export class ProductoService {
         `Producto con ID ${id} no encontrado o no pertenece a su empresa`,
       );
     }
+
+    await this.datosSunat(updateProductoDto);
 
     // Verificar la categoría si se está cambiando
     if (

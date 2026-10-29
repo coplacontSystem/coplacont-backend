@@ -32,7 +32,16 @@ export class ErroresFilter implements ExceptionFilter {
     const res = host.switchToHttp().getResponse<Response>();
 
     if (exception instanceof HttpException) {
-      res.status(exception.getStatus()).json(exception.getResponse());
+      const status = exception.getStatus();
+      const cuerpo = exception.getResponse();
+      // Las excepciones creadas con un texto devuelven el mismo formato que el resto
+      res
+        .status(status)
+        .json(
+          typeof cuerpo === 'string'
+            ? { statusCode: status, message: cuerpo }
+            : cuerpo,
+        );
       return;
     }
 

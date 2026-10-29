@@ -7,17 +7,57 @@ import {
   Length,
   Min,
   IsPositive,
+  IsIn,
+  IsInt,
+  Matches,
 } from 'class-validator';
 
 export class CreateComprobanteDetalleDto {
-  @ApiProperty({
-    description: 'ID del inventario asociado al detalle',
+  @ApiPropertyOptional({
+    description:
+      'producto (mueve inventario, por defecto) o servicio (gasto/ingreso sin inventario)',
+    enum: ['producto', 'servicio'],
+    default: 'producto',
+  })
+  @IsOptional()
+  @IsIn(['producto', 'servicio'])
+  tipoLinea?: 'producto' | 'servicio';
+
+  @ApiPropertyOptional({
+    description: 'ID del inventario (obligatorio en líneas de producto)',
     example: 123,
   })
+  @IsOptional()
   @IsNumber()
-  @IsNotEmpty()
   @Min(1)
-  idInventario: number;
+  idInventario?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Cuenta de gasto o ingreso (obligatoria en líneas de servicio)',
+    example: '6361',
+  })
+  @IsOptional()
+  @Matches(/^\d{2,10}$/, { message: 'Código de cuenta inválido' })
+  codigoCuenta?: string;
+
+  @ApiPropertyOptional({
+    description: 'Área o centro de costo de la línea (para el destino)',
+    example: 1,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  idArea?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Afectación del IGV (catálogo 07): 10 gravado, 20 exonerado, 30 inafecto, 40 exportación',
+    example: '10',
+  })
+  @IsOptional()
+  @Matches(/^\d{2}$/, { message: 'Afectación del IGV inválida' })
+  afectacionIgv?: string;
 
   @ApiProperty({
     description: 'Cantidad del producto o servicio',

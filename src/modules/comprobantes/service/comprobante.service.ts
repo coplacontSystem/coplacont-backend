@@ -2,6 +2,7 @@ import { listar, Pagina, PaginacionDto } from 'src/common/paginacion';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Repository, DataSource, Not, In, EntityManager } from 'typeorm';
 import { Comprobante } from '../entities/comprobante';
+import { ComprobanteDetalle } from '../entities/comprobante-detalle';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateComprobanteDto } from '../dto/comprobante/create-comprobante.dto';
 import { EntidadService } from 'src/modules/entidades/services';
@@ -35,6 +36,13 @@ import {
   OPERACION,
 } from 'src/common/catalogo.service';
 import { KardexMaterializadoService } from 'src/modules/inventario/valoracion/kardex-materializado.service';
+import { PlanContableService } from 'src/modules/contabilidad/plan-contable.service';
+import { AreaService } from 'src/modules/contabilidad/areas/area.service';
+import { AsientoAutomaticoService } from 'src/modules/contabilidad/asientos/automatico/asiento-automatico.service';
+import { CreateComprobanteDetalleDto } from '../dto/comprobante-detalle/create-comprobante-detalle.dto';
+
+const esServicio = (d: CreateComprobanteDetalleDto) =>
+  d.tipoLinea === 'servicio';
 
 @Injectable()
 export class ComprobanteService implements OnModuleInit {
@@ -57,6 +65,9 @@ export class ComprobanteService implements OnModuleInit {
     private readonly pertenencia: PertenenciaService,
     private readonly catalogo: CatalogoService,
     private readonly kardex: KardexMaterializadoService,
+    private readonly planContable: PlanContableService,
+    private readonly areas: AreaService,
+    private readonly asientosAutomaticos: AsientoAutomaticoService,
   ) {}
 
   /**
@@ -126,8 +137,14 @@ export class ComprobanteService implements OnModuleInit {
   ): Promise<ResponseComprobanteDto> {
     // Todo lo referenciado debe pertenecer a la empresa del usuario
     await this.pertenencia.entidades([dto.idPersona], personaId);
+    const cuentasPorCodigo = await this.validarLineas(
+      dto.detalles ?? [],
+      personaId,
+    );
     await this.pertenencia.inventarios(
-      (dto.detalles ?? []).map((d) => d.idInventario),
+      (dto.detalles ?? [])
+        .filter((d) => !esServicio(d))
+        .map((d) => d.idInventario!),
       personaId,
     );
     if (dto.idComprobanteAfecto) {
@@ -143,7 +160,14 @@ export class ComprobanteService implements OnModuleInit {
     }
 
     const idComprobante = await runInTransaction(() =>
-      this.registrarEnTransaccion(dto, personaId),
+      this.registrarEnTransaccion(dto, personaId, cuentasPorCodigo),
+    );
+    // Asiento del Libro Diario: si falla (p. ej. falta una cuenta), el
+    // comprobante queda registrado y el asiento se genera después
+    await this.asientosAutomaticos.generarSinFallar(
+      personaId,
+      idComprobante,
+      'Automático',
     );
 
     const guardado = await this.comprobanteRepository.findOne({
@@ -157,6 +181,8 @@ export class ComprobanteService implements OnModuleInit {
         'detalles',
         'detalles.inventario',
         'detalles.inventario.producto',
+        'detalles.cuentaContable',
+        'detalles.area',
       ],
     });
     return plainToInstance(ResponseComprobanteDto, guardado, {
@@ -168,6 +194,7 @@ export class ComprobanteService implements OnModuleInit {
   private async registrarEnTransaccion(
     dto: CreateComprobanteDto,
     personaId: number,
+    cuentasPorCodigo: Map<string, number>,
   ): Promise<number> {
     // Dentro de runInTransaction este manager (y los repositorios) usan la transacción
     const manager = this.dataSource.manager;
@@ -242,13 +269,29 @@ export class ComprobanteService implements OnModuleInit {
     if (dto.idComprobanteAfecto) {
       comprobanteAfecto = await manager.findOne(Comprobante, {
         where: { idComprobante: dto.idComprobanteAfecto },
-        relations: ['tipoOperacion'],
+        relations: [
+          'tipoOperacion',
+          'tipoComprobante',
+          'entidad',
+          'totales',
+          'detalles',
+          'detalles.inventario',
+        ],
       });
     }
+    await this.validarNota(
+      manager,
+      dto,
+      tipoOperacion.codigo,
+      tipoComprobante.codigo,
+      comprobanteAfecto,
+    );
 
     const detalles = this.existDetails(dto) ? dto.detalles! : [];
+    // Solo las líneas de producto mueven inventario y kardex
+    const deProducto = detalles.filter((d) => !esServicio(d));
     const modo =
-      detalles.length > 0
+      deProducto.length > 0
         ? modoInventario(
             tipoOperacion.codigo,
             tipoComprobante.codigo,
@@ -261,7 +304,7 @@ export class ComprobanteService implements OnModuleInit {
       // las salidas (en su fecha y después) lo valida el motor de valoración.
       await bloquearInventarios(
         manager,
-        detalles.map((d) => d.idInventario),
+        deProducto.map((d) => d.idInventario!),
       );
     }
 
@@ -296,6 +339,7 @@ export class ComprobanteService implements OnModuleInit {
         guardado.idComprobante,
         Number(dto.total ?? 0),
         manager,
+        dto.desglose,
       );
       return guardado.idComprobante;
     }
@@ -304,8 +348,13 @@ export class ComprobanteService implements OnModuleInit {
       guardado.idComprobante,
       detalles,
       manager,
+      cuentasPorCodigo,
     );
     if (!modo) return guardado.idComprobante;
+    // Mismo orden (por id) en los costos y en el movimiento
+    const guardadosDeProducto = detallesGuardados
+      .filter((d) => d.inventario)
+      .sort((a, b) => a.idDetalle - b.idDetalle);
 
     // Lotes (entrada) o consumo de lotes (salida). El costo se guarda en soles.
     const factorCosto = dto.moneda === Moneda.USD ? Number(dto.tipoCambio) : 1;
@@ -317,12 +366,12 @@ export class ComprobanteService implements OnModuleInit {
     const costosEntrada = esDevolucionDeVenta
       ? await this.kardex.costoDeSalidaDe(
           comprobanteAfecto!.idComprobante,
-          detalles.map((d) => d.idInventario),
+          deProducto.map((d) => d.idInventario!),
         )
       : undefined;
     const { costoUnitario, lotes } =
       await this.loteCreationService.procesarLotesComprobante(
-        detallesGuardados,
+        guardadosDeProducto,
         modo,
         fecha,
         factorCosto,
@@ -339,6 +388,9 @@ export class ComprobanteService implements OnModuleInit {
         'detalles.inventario.producto',
       ],
     });
+    conRelaciones!.detalles = conRelaciones!.detalles
+      .filter((d) => d.inventario)
+      .sort((a, b) => a.idDetalle - b.idDetalle);
     const movimientoDto =
       this.movimientoFactory.createMovimientoFromComprobante(
         conRelaciones!,
@@ -349,11 +401,46 @@ export class ComprobanteService implements OnModuleInit {
     await this.movimientoService.createWithManager(movimientoDto, manager);
     // Kardex materializado: recalcula desde el día del comprobante
     await this.kardex.recalcularDesde(
-      detalles.map((d) => d.idInventario),
+      deProducto.map((d) => d.idInventario!),
       ymdContable(fecha),
     );
 
     return guardado.idComprobante;
+  }
+
+  /**
+   * Líneas de producto: inventario obligatorio. Líneas de servicio: cuenta de
+   * movimiento del plan de la empresa y, opcional, un área activa.
+   * Devuelve el id de cada cuenta usada.
+   */
+  private async validarLineas(
+    detalles: CreateComprobanteDetalleDto[],
+    personaId: number,
+  ): Promise<Map<string, number>> {
+    const errores: string[] = [];
+    detalles.forEach((d, i) => {
+      const linea = `Línea ${i + 1}`;
+      if (esServicio(d)) {
+        if (d.idInventario)
+          errores.push(`${linea}: una línea de servicio no lleva inventario`);
+        if (!d.codigoCuenta)
+          errores.push(`${linea}: indica la cuenta de gasto o ingreso`);
+      } else if (!d.idInventario) {
+        errores.push(`${linea}: indica el producto (inventario)`);
+      }
+    });
+    if (errores.length) throw new BadRequestException(errores);
+
+    const servicios = detalles.filter(esServicio);
+    const cuentas = await this.planContable.resolverImputables(
+      personaId,
+      servicios.map((d) => d.codigoCuenta!),
+    );
+    await this.areas.validarActivas(
+      personaId,
+      detalles.filter((d) => d.idArea).map((d) => d.idArea!),
+    );
+    return new Map([...cuentas].map(([codigo, c]) => [codigo, c.id]));
   }
 
   /**
@@ -420,6 +507,113 @@ export class ComprobanteService implements OnModuleInit {
           excludeExtraneousValues: true,
         }),
     );
+  }
+
+  /**
+   * Reglas de las notas de crédito (07) y débito (08): modifican un comprobante
+   * del mismo tipo de operación, contraparte y moneda, sin ser anteriores a él.
+   * Las de crédito, sumadas a las ya registradas, no pueden devolver más importe
+   * ni más unidades de las que tenía el comprobante.
+   */
+  private async validarNota(
+    manager: EntityManager,
+    dto: CreateComprobanteDto,
+    codigoOperacion: string,
+    codigoComprobante: string,
+    afectado: Comprobante | null,
+  ): Promise<void> {
+    const esCredito = codigoComprobante === COMPROBANTE.NOTA_CREDITO;
+    if (!esCredito && codigoComprobante !== COMPROBANTE.NOTA_DEBITO) return;
+    const nota = esCredito ? 'La nota de crédito' : 'La nota de débito';
+    if (!dto.idComprobanteAfecto) {
+      throw new BadRequestException(
+        `${nota} debe indicar el comprobante que modifica`,
+      );
+    }
+    if (!afectado) {
+      throw new BadRequestException(
+        'No existe el comprobante que modifica la nota',
+      );
+    }
+    const ref = `${afectado.serie}-${afectado.numero}`;
+    const notas: string[] = [COMPROBANTE.NOTA_CREDITO, COMPROBANTE.NOTA_DEBITO];
+    if (notas.includes(afectado.tipoComprobante.codigo)) {
+      throw new BadRequestException(
+        `${nota} no puede modificar otra nota (${ref})`,
+      );
+    }
+    if (afectado.tipoOperacion.codigo !== codigoOperacion) {
+      throw new BadRequestException(
+        `${nota} debe ser del mismo tipo de operación que ${ref} (compra o venta)`,
+      );
+    }
+    if (afectado.entidad && afectado.entidad.id !== dto.idPersona) {
+      throw new BadRequestException(
+        `${nota} debe ser de la misma contraparte que ${ref}`,
+      );
+    }
+    if (afectado.moneda !== dto.moneda) {
+      throw new BadRequestException(
+        `${nota} debe estar en la misma moneda que ${ref} (${afectado.moneda})`,
+      );
+    }
+    if (
+      ymdContable(fechaContable(dto.fechaEmision)) <
+      ymdContable(afectado.fechaEmision)
+    ) {
+      throw new BadRequestException(`${nota} no puede ser anterior a ${ref}`);
+    }
+    if (!esCredito) return;
+
+    const previas = await manager.find(Comprobante, {
+      where: {
+        comprobanteAfecto: { idComprobante: afectado.idComprobante },
+        tipoComprobante: { codigo: COMPROBANTE.NOTA_CREDITO },
+      },
+      relations: ['totales', 'detalles', 'detalles.inventario'],
+    });
+    const detalles = this.existDetails(dto) ? dto.detalles! : [];
+    const totalNota = detalles.length
+      ? detalles.reduce((s, d) => s + Number(d.total), 0)
+      : Number(dto.total ?? 0);
+    const acreditado = previas.reduce(
+      (s, c) => s + Number(c.totales?.totalGeneral ?? 0),
+      0,
+    );
+    const saldo = Number(afectado.totales?.totalGeneral ?? 0) - acreditado;
+    if (totalNota > saldo + 0.01) {
+      throw new BadRequestException(
+        `${nota} (${totalNota.toFixed(2)}) supera el saldo de ${ref} (${saldo.toFixed(2)})`,
+      );
+    }
+
+    // Por inventario, lo devuelto no puede pasar de lo comprado o vendido
+    const unidades = (ds: ComprobanteDetalle[]) => {
+      const m = new Map<number, number>();
+      for (const d of ds) {
+        if (!d.inventario) continue;
+        const id = Number(d.inventario.id); // bigint: llega como texto
+        m.set(id, (m.get(id) ?? 0) + Number(d.cantidad));
+      }
+      return m;
+    };
+    const original = unidades(afectado.detalles ?? []);
+    const devuelto = unidades(previas.flatMap((c) => c.detalles ?? []));
+    for (const d of detalles.filter((x) => !esServicio(x))) {
+      const id = Number(d.idInventario);
+      const maximo = original.get(id);
+      if (maximo == null) {
+        throw new BadRequestException(
+          `${nota} devuelve un producto que no está en ${ref}`,
+        );
+      }
+      devuelto.set(id, (devuelto.get(id) ?? 0) + Number(d.cantidad));
+      if (devuelto.get(id)! > maximo + 1e-6) {
+        throw new BadRequestException(
+          `${nota} devuelve más unidades de las que tiene ${ref} (${maximo})`,
+        );
+      }
+    }
   }
 
   existDetails(createComprobanteDto: CreateComprobanteDto): boolean {

@@ -41,7 +41,7 @@ export class LoteCreationService {
       // El método sale del período contable de cada fecha (ver ValoracionService)
       const costeadas = await this.kardex.costearSalidas(
         detalles.map((d) => ({
-          idInventario: Number(d.inventario.id),
+          idInventario: Number(d.inventario!.id),
           cantidad: Number(d.cantidad),
         })),
         fechaEmision,
@@ -67,7 +67,7 @@ export class LoteCreationService {
     for (const detalle of detalles) {
       // El costo del lote se guarda siempre en soles (factorCosto = tipo de cambio)
       const costo =
-        costosEntrada?.get(Number(detalle.inventario.id)) ??
+        costosEntrada?.get(Number(detalle.inventario!.id)) ??
         Number(detalle.precioUnitario) * factorCosto;
       const loteCreado = await this.registrarLoteCompra(
         detalle,

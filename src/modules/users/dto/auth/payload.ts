@@ -6,4 +6,6 @@ export class Payload {
   email: string;
   roles: Role[];
   permissions: Permission[];
+  /** Versión de sesión del usuario al emitir el token */
+  ver?: number;
 }

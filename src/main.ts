@@ -4,7 +4,7 @@ dotenv.config();
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { setupSwagger } from './config/swagger.config';
-import { configureApp } from './config/app.config';
+import { configureApp, swaggerHabilitado } from './config/app.config';
 import {
   addTransactionalDataSource,
   initializeTransactionalContext,
@@ -29,25 +29,29 @@ async function createApp(): Promise<Express> {
     AppModule,
     new ExpressAdapter(expressApp),
   );
-  // Foto de perfil y logo viajan como data URL dentro del JSON
-  app.useBodyParser('json', { limit: '3mb' });
+  // Foto de perfil, logo y XML importados viajan en base64 dentro del JSON
+  app.useBodyParser('json', { limit: '15mb' });
 
   const dataSource = app.get(DataSource);
   addTransactionalDataSource(dataSource);
 
   configureApp(app);
 
-  // Configurar Swagger
-  setupSwagger(app);
+  // Detrás del proxy de Render/Vercel: la IP real viene en X-Forwarded-For
+  app.set('trust proxy', 1);
 
-  // Redirección automática de / a /api/docs
-  app.use('/', (req: Request, res: Response, next: NextFunction) => {
-    if (req.url === '/') {
-      res.redirect('/api/docs');
-      return;
-    }
-    next();
-  });
+  if (swaggerHabilitado()) {
+    setupSwagger(app);
+
+    // Redirección automática de / a /api/docs
+    app.use('/', (req: Request, res: Response, next: NextFunction) => {
+      if (req.url === '/') {
+        res.redirect('/api/docs');
+        return;
+      }
+      next();
+    });
+  }
 
   await app.init();
   cachedApp = expressApp;

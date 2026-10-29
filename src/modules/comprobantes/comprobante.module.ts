@@ -24,6 +24,7 @@ import { ComprobanteTotalesService } from './service/comprobante-totales.service
 import { TransferenciasService } from './service/transferencias.service';
 import { UserModule } from '../users/user.module';
 import { PeriodosModule } from '../periodos/periodos.module';
+import { ContabilidadModule } from '../contabilidad/contabilidad.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { PeriodosModule } from '../periodos/periodos.module';
     UserModule,
     PeriodosModule,
     ReportesModule,
+    ContabilidadModule,
   ],
   controllers: [
     ComprobanteController,

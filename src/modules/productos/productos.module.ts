@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CatalogosModule } from '../catalogos/catalogos.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // Entities
@@ -20,6 +21,7 @@ import { UserModule } from '../users/user.module';
   imports: [
     TypeOrmModule.forFeature([Producto, Almacen, Categoria]),
     UserModule, // Importar UserModule para JwtAuthGuard, JwtService y UserService
+    CatalogosModule,
   ],
   controllers: [ProductoController],
   providers: [ProductoService],

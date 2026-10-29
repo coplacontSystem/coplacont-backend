@@ -1,3 +1,5 @@
+import { RegistroAcceso } from './entities/registro-acceso.entity';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { Module } from '@nestjs/common';
 import { UserController } from './controllers/user.controller';
 import { UserService } from './services/user.service';
@@ -35,13 +37,27 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
       Permission,
       RolePermission,
       Persona,
+      RegistroAcceso,
     ]),
+    // Límite por IP para los endpoints de acceso (el bloqueo por correo va en AuthService)
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 30 }],
+      errorMessage:
+        'Demasiadas solicitudes desde tu conexión. Espera un minuto e inténtalo de nuevo.',
+      // Las pruebas e2e inician muchas sesiones seguidas desde la misma IP
+      skipIf: () =>
+        process.env.NODE_ENV === 'test' &&
+        process.env.LIMITAR_EN_PRUEBAS !== '1',
+    }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: '1d' },
+        // Jornada de trabajo; las sesiones se pueden cerrar antes con /auth/cerrar-sesiones
+        signOptions: {
+          expiresIn: configService.get<string>('JWT_EXPIRES_IN') ?? '8h',
+        },
       }),
     }),
   ],
